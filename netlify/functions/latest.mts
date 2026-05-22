@@ -2,6 +2,7 @@ import { getStore } from "@netlify/blobs";
 import type { Config } from "@netlify/functions";
 import { jsonResponse } from "./_shared/env.js";
 import { readStaticJson } from "./_shared/static.js";
+import { loadSourceMapDocument } from "./_shared/source-map.js";
 import { STORE_NAME } from "../../scripts/lib/openalex.mjs";
 
 type LatestPayload = {
@@ -33,13 +34,20 @@ export default async (request: Request) => {
   const staticLatest = await readStaticJson<LatestPayload>("public/data/latest.json");
   const latest = blobLatest ?? staticLatest ?? { status: { errors: ["No latest dataset available."] }, items: [] };
   const blobStatus = await getBlobJson<Record<string, unknown>>("status.json");
+  const sourceInfo = await loadSourceMapDocument();
 
   return jsonResponse(
     {
       ...latest,
       status: {
         ...(latest.status ?? {}),
-        ...(blobStatus ?? {})
+        ...(blobStatus ?? {}),
+        activeSourceMap: sourceInfo.source,
+        resolvedSourceCount: sourceInfo.stats.resolvedSourceCount,
+        unresolvedJournalCount: sourceInfo.stats.unresolvedJournalCount,
+        lastSourceResolutionAt: sourceInfo.generatedAt || null,
+        updateFrequency: "daily",
+        schedule: "0 5 * * *"
       }
     },
     { headers: cacheHeaders }

@@ -24,10 +24,16 @@ export type ResearchItem = {
 
 export type MonitorStatus = {
   lastUpdated: string | null;
+  lastArticleFetchAt?: string | null;
+  lastSourceResolutionAt?: string | null;
+  activeSourceMap?: "blob" | "static" | null;
   itemCount: number;
   resolvedSourceCount: number;
   unresolvedJournalCount: number;
+  updateFrequency?: "daily";
+  schedule?: string;
   errors: string[];
+  openAlexErrors?: string[];
 };
 
 export type LatestPayload = {

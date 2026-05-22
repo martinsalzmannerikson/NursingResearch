@@ -2,6 +2,8 @@ import { normalizeDoi, normalizeTitle, rowsToCsv } from "./csv.mjs";
 
 export const OPENALEX_BASE_URL = "https://api.openalex.org";
 export const STORE_NAME = "nursing-research-monitor";
+export const UPDATE_FREQUENCY = "daily";
+export const UPDATE_SCHEDULE = "0 5 * * *";
 
 const WORK_SELECT_FIELDS = [
   "id",
@@ -67,6 +69,15 @@ export function confidenceLabel(score) {
   if (score >= 68) return "resolved_medium";
   if (score >= 45) return "resolved_low";
   return "unresolved";
+}
+
+export function isOpenAlexStopErrorMessage(value = "") {
+  return /429|too many requests|rate limit|insufficient budget|dailyremainingusd|creditsremaining/i.test(String(value));
+}
+
+function sleep(ms) {
+  const delay = Number(ms || 0);
+  return delay > 0 ? new Promise((resolve) => setTimeout(resolve, delay)) : Promise.resolve();
 }
 
 export function scoreOpenAlexSource(journal, source) {
@@ -226,7 +237,8 @@ export async function resolveJournalSource(journal, options = {}) {
   const byId = new Map();
   const errors = [];
 
-  for (const variant of variants) {
+  for (const [index, variant] of variants.entries()) {
+    if (index > 0) await sleep(options.delayMs);
     try {
       const candidates = await searchOpenAlexSources(variant, options);
       for (const source of candidates) {
@@ -234,6 +246,7 @@ export async function resolveJournalSource(journal, options = {}) {
       }
     } catch (error) {
       errors.push(`${variant}: ${error.message}`);
+      if (isOpenAlexStopErrorMessage(error.message)) break;
     }
   }
 
@@ -261,14 +274,17 @@ export async function resolveJournalSource(journal, options = {}) {
     best &&
     best.status === "resolved_low" &&
     candidates.filter((candidate) => candidate.confidence >= 35 && candidate.type === "journal").length === 1;
+  const acceptLowConfidence = options.acceptLowConfidence !== false;
   const accepted = Boolean(
     best &&
       (best.status === "resolved_high" ||
         best.status === "resolved_medium" ||
-        (onlyPlausibleLow && best.confidence >= 45))
+        (acceptLowConfidence && onlyPlausibleLow && best.confidence >= 45))
   );
-  const status = accepted ? best.status : "unresolved";
+  const lowNotAccepted = Boolean(best && best.status === "resolved_low" && !accepted);
+  const status = accepted ? best.status : lowNotAccepted ? "resolved_low" : "unresolved";
   const warning = [
+    lowNotAccepted ? "Low-confidence source candidate was not accepted automatically." : "",
     accepted && best.status === "resolved_low"
       ? "Low-confidence source accepted because it was the only plausible journal candidate."
       : "",
@@ -285,7 +301,7 @@ export async function resolveJournalSource(journal, options = {}) {
     journal_name: journal.journal_name,
     journal,
     status,
-    confidence: accepted ? best.confidence : 0,
+    confidence: accepted || lowNotAccepted ? best.confidence : 0,
     warning,
     openalex_source_id: accepted ? best.id : "",
     openalex_source_key: accepted ? openAlexKey(best.id) : "",
@@ -301,6 +317,9 @@ export async function resolveJournalSource(journal, options = {}) {
 export function sourceMapStats(entries) {
   return {
     totalJournalCount: entries.length,
+    resolvedHighCount: entries.filter((entry) => entry.status === "resolved_high").length,
+    resolvedMediumCount: entries.filter((entry) => entry.status === "resolved_medium").length,
+    resolvedLowCount: entries.filter((entry) => entry.status === "resolved_low").length,
     resolvedSourceCount: entries.filter((entry) => entry.openalex_source_id).length,
     unresolvedJournalCount: entries.filter((entry) => !entry.openalex_source_id).length,
     lowConfidenceCount: entries.filter((entry) => entry.status === "resolved_low").length
@@ -452,10 +471,16 @@ export function latestFallback({ sourceMap = [], errors = [], days = 90, maxResu
     },
     status: {
       lastUpdated,
+      lastArticleFetchAt: lastUpdated,
+      lastSourceResolutionAt: null,
+      activeSourceMap: null,
+      updateFrequency: UPDATE_FREQUENCY,
+      schedule: UPDATE_SCHEDULE,
       itemCount: 0,
       resolvedSourceCount: stats.resolvedSourceCount,
       unresolvedJournalCount: stats.unresolvedJournalCount,
-      errors: errors.length ? errors : ["No resolved source IDs or no OpenAlex results were available."]
+      errors: errors.length ? errors : ["No resolved source IDs or no OpenAlex results were available."],
+      openAlexErrors: errors.length ? errors : ["No resolved source IDs or no OpenAlex results were available."]
     },
     diagnostics: stats,
     items: []
@@ -524,10 +549,16 @@ export async function fetchLatestWorks(sourceMap, options = {}) {
     },
     status: {
       lastUpdated: fetchedAt,
+      lastArticleFetchAt: fetchedAt,
+      lastSourceResolutionAt: null,
+      activeSourceMap: null,
+      updateFrequency: UPDATE_FREQUENCY,
+      schedule: UPDATE_SCHEDULE,
       itemCount: sorted.length,
       resolvedSourceCount: stats.resolvedSourceCount,
       unresolvedJournalCount: stats.unresolvedJournalCount,
-      errors
+      errors,
+      openAlexErrors: errors
     },
     diagnostics: {
       ...stats,

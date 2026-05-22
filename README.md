@@ -70,7 +70,7 @@ For Netlify Functions and local Blobs behavior, run through Netlify Dev after in
 netlify dev
 ```
 
-## Manual Refresh
+## Manual Operations
 
 Set a non-default `REFRESH_TOKEN`, then call:
 
@@ -86,18 +86,27 @@ curl -H "Authorization: Bearer YOUR_TOKEN" "https://YOUR_SITE.netlify.app/api/re
 
 The endpoint never returns the secret value.
 
+Resolve OpenAlex sources before the first article refresh:
+
+```bash
+curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
+```
+
 ## Environment Variables
 
 Copy `.env.example` for local development:
 
 ```bash
 OPENALEX_API_KEY=
+OPENALEX_MAILTO=
 REFRESH_TOKEN=change-me
 RECENT_DAYS=90
 MAX_RESULTS=1000
+OPENALEX_MAX_PAGES_PER_CHUNK=1
+OPENALEX_RESOLVE_DELAY_MS=750
 ```
 
-`OPENALEX_API_KEY` is optional locally. Production hourly refreshes should use an OpenAlex API key, or at least a polite-pool contact variable such as `OPENALEX_MAILTO`, to reduce rate-limit risk.
+`OPENALEX_API_KEY` is optional for static local UI development, but production source resolution and daily refreshes should use both `OPENALEX_API_KEY` and `OPENALEX_MAILTO`.
 
 ## Netlify Deploy
 
@@ -106,10 +115,47 @@ MAX_RESULTS=1000
 - build command: `npm run normalize && npm run build`
 - publish directory: `dist`
 - functions directory: `netlify/functions`
-- scheduled function: `update-latest` with `@hourly`
-- API redirects for `/api/latest`, `/api/status`, and `/api/refresh`
+- scheduled function: `update-latest` with `0 5 * * *` for daily updates at 05:00 UTC
+- API redirects for `/api/latest`, `/api/status`, `/api/refresh`, and `/api/resolve-sources`
 
 Set environment variables in the Netlify UI or CLI before production deploy.
+
+## Production Operating Sequence
+
+A. Add Netlify environment variables:
+
+```bash
+OPENALEX_API_KEY
+OPENALEX_MAILTO
+REFRESH_TOKEN
+RECENT_DAYS=90
+MAX_RESULTS=1000
+OPENALEX_MAX_PAGES_PER_CHUNK=1
+OPENALEX_RESOLVE_DELAY_MS=750
+```
+
+B. Deploy production.
+
+C. Run source resolution manually:
+
+```text
+https://nursing-research-monitor.netlify.app/api/resolve-sources?token=YOUR_REFRESH_TOKEN
+```
+
+D. Then run article refresh manually:
+
+```text
+https://nursing-research-monitor.netlify.app/api/refresh?token=YOUR_REFRESH_TOKEN
+```
+
+E. Check:
+
+```text
+https://nursing-research-monitor.netlify.app/api/status
+https://nursing-research-monitor.netlify.app/api/latest
+```
+
+F. Confirm that the scheduled function updates once per day at 05:00 UTC.
 
 ## Checks
 
@@ -124,6 +170,6 @@ npm run build
 
 ## Limitations
 
-OpenAlex source matching is probabilistic because the manifest intentionally starts with blank OpenAlex and ISSN fields. Exact or high-confidence title matches are accepted automatically; low-confidence matches are accepted only when they are the only plausible journal source and are flagged. Remaining unresolved or warning rows are documented in `src/data/unresolved-journals.csv`.
+OpenAlex source matching is probabilistic because the manifest intentionally starts with blank OpenAlex and ISSN fields. Exact and medium-confidence title matches are accepted automatically; low-confidence candidates are recorded but not silently accepted by the protected Netlify resolver. Remaining unresolved or warning rows are documented in `src/data/unresolved-journals.csv` and, after production resolution, in the Netlify Blob `unresolved-journals.json`.
 
 OpenAlex may index ahead-of-print articles, corrections, or records with incomplete abstracts. The UI keeps those records readable and transparent but does not replace scholarly review of each citation.

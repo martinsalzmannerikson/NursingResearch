@@ -12,8 +12,22 @@ describe("Nursing Research Monitor smoke tests", () => {
   });
 
   it("renders an empty state when there are no articles", async () => {
-    render(<App initialData={{ ...latestPayload, status: { ...latestPayload.status, itemCount: 0 }, items: [] }} />);
+    render(<App initialData={{ ...latestPayload, status: { ...latestPayload.status, itemCount: 0, resolvedSourceCount: 2 }, items: [] }} />);
     expect(screen.getByText(/No articles in current filter window/i)).toBeInTheDocument();
+  });
+
+  it("renders the resolver guidance when no OpenAlex sources are resolved", async () => {
+    render(
+      <App
+        initialData={{
+          ...latestPayload,
+          status: { ...latestPayload.status, itemCount: 0, resolvedSourceCount: 0, unresolvedJournalCount: 366 },
+          items: []
+        }}
+      />
+    );
+    expect(screen.getByRole("heading", { name: /No OpenAlex journal sources have been resolved yet/i })).toBeInTheDocument();
+    expect(screen.getByText(/Add OPENALEX_API_KEY and OPENALEX_MAILTO in Netlify/i)).toBeInTheDocument();
   });
 
   it("loads static fallback through the API helper path", async () => {

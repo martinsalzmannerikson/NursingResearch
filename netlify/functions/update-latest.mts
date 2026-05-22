@@ -8,5 +8,5 @@ export default async () => {
 };
 
 export const config: Config = {
-  schedule: "@hourly"
+  schedule: "0 5 * * *"
 };

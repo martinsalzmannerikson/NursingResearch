@@ -66,6 +66,7 @@ export default function App({ initialData }: AppProps) {
   const filteredItems = useMemo(() => filterAndSortItems(items, filters), [items, filters]);
   const visibleItems = filteredItems.slice(0, visibleCount);
   const lastUpdated = data?.status.lastUpdated ?? data?.metadata?.generated_at ?? null;
+  const hasNoResolvedSources = !loading && (data?.status.resolvedSourceCount ?? 0) === 0 && (data?.status.itemCount ?? 0) === 0;
 
   useEffect(() => {
     setVisibleCount(visibleStep);
@@ -103,7 +104,7 @@ export default function App({ initialData }: AppProps) {
           <div className="boot-grid">
             <span>LOAD "NURSING-RES",8,1</span>
             <span>SEARCHING... {filteredItems.length} ITEMS</span>
-            <span>READY. CLR UPDATED: {formatDateTime(lastUpdated)} SOURCE: OPENALEX FILTER: JOURNAL + DOI</span>
+            <span>READY. DAILY UPDATE 05:00 UTC. CLR UPDATED: {formatDateTime(lastUpdated)} SOURCE: OPENALEX FILTER: JOURNAL + DOI</span>
           </div>
           <label className="command-line" htmlFor="command-search">
             <span aria-hidden="true">&gt;</span>
@@ -211,8 +212,20 @@ export default function App({ initialData }: AppProps) {
           {!loading && visibleItems.length === 0 ? (
             <div className="empty-state panel">
               <Database size={28} aria-hidden="true" />
-              <h2>No articles in current filter window</h2>
-              <p>Broaden the date range, clear the command line, or run the OpenAlex refresh pipeline.</p>
+              {hasNoResolvedSources ? (
+                <>
+                  <h2>No OpenAlex journal sources have been resolved yet</h2>
+                  <p>
+                    No OpenAlex journal sources have been resolved yet. Add OPENALEX_API_KEY and OPENALEX_MAILTO in
+                    Netlify, then run the protected source resolver.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h2>No articles in current filter window</h2>
+                  <p>Broaden the date range, clear the command line, or run the OpenAlex refresh pipeline.</p>
+                </>
+              )}
             </div>
           ) : null}
 
@@ -248,7 +261,9 @@ export default function App({ initialData }: AppProps) {
             <div className="diagnostics-body">
               <p>
                 Resolved sources: {data?.status.resolvedSourceCount ?? 0}. Unresolved journals:{" "}
-                {data?.status.unresolvedJournalCount ?? 0}. Latest generated dataset contains {items.length} items.
+                {data?.status.unresolvedJournalCount ?? 0}. Active source map: {data?.status.activeSourceMap ?? "static"}.
+                Latest generated dataset contains {items.length} items. Daily update schedule:{" "}
+                {data?.status.schedule ?? "0 5 * * *"}.
               </p>
               {data?.status.errors?.length ? (
                 <ul>
@@ -267,7 +282,7 @@ export default function App({ initialData }: AppProps) {
           <p>
             Method: journal manifest normalized from CSV, OpenAlex Sources resolved by title variants and publisher
             signals, Works filtered by journal source and DOI/OpenAlex de-duplication. Cached on Netlify Blobs with a
-            static JSON fallback.
+            static JSON fallback and refreshed daily at 05:00 UTC.
           </p>
         </footer>
       </section>

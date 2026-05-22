@@ -56,9 +56,14 @@ export const latestPayload: LatestPayload = {
   },
   status: {
     lastUpdated: "2026-05-22T12:00:00Z",
+    lastArticleFetchAt: "2026-05-22T12:00:00Z",
+    lastSourceResolutionAt: "2026-05-22T11:00:00Z",
+    activeSourceMap: "blob",
     itemCount: 2,
     resolvedSourceCount: 300,
     unresolvedJournalCount: 66,
+    updateFrequency: "daily",
+    schedule: "0 5 * * *",
     errors: []
   },
   items: [itemA, itemB]

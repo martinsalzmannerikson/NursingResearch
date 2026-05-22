@@ -1,28 +1,14 @@
 import { getStore } from "@netlify/blobs";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { getEnv } from "./env.js";
+import { extendStatus, loadSourceMapDocument } from "./source-map.js";
 import { fetchLatestWorks, latestFallback, STORE_NAME } from "../../../scripts/lib/openalex.mjs";
 
-type SourceMapDocument = {
-  sources?: unknown[];
-};
-
-async function loadSourceMap() {
-  try {
-    const sourceMapPath = path.join(process.cwd(), "src/data/openalex-source-map.json");
-    const parsed = JSON.parse(await readFile(sourceMapPath, "utf8")) as SourceMapDocument;
-    return parsed.sources ?? [];
-  } catch (error) {
-    console.warn(`Could not read source map: ${(error as Error).message}`);
-    return [];
-  }
-}
-
 export async function runLatestUpdate() {
-  const sourceMap = await loadSourceMap();
+  const sourceInfo = await loadSourceMapDocument();
+  const sourceMap = sourceInfo.sources;
   const days = Number(getEnv("RECENT_DAYS", "90"));
   const maxResults = Number(getEnv("MAX_RESULTS", "1000"));
+  const maxPagesPerChunk = Number(getEnv("OPENALEX_MAX_PAGES_PER_CHUNK", "1"));
   let latest;
   const fetchLatest = fetchLatestWorks as (
     entries: unknown[],
@@ -30,30 +16,58 @@ export async function runLatestUpdate() {
   ) => Promise<{
     status: { errors: string[] };
     items: unknown[];
+    metadata?: Record<string, unknown>;
   }>;
   const makeFallback = latestFallback as (options: Record<string, unknown>) => {
     status: { errors: string[] };
     items: unknown[];
+    metadata?: Record<string, unknown>;
   };
 
-  try {
-    latest = await fetchLatest(sourceMap, {
-      days,
-      maxResults,
-      env: {
-        OPENALEX_API_KEY: getEnv("OPENALEX_API_KEY"),
-        OPENALEX_MAILTO: getEnv("OPENALEX_MAILTO")
-      },
-      maxPagesPerChunk: 2
-    });
-  } catch (error) {
+  const sourceErrors = [...sourceInfo.errors];
+  if (sourceInfo.stats.resolvedSourceCount === 0) {
     latest = makeFallback({
       sourceMap,
-      errors: [`OpenAlex update failed: ${(error as Error).message}`],
+      errors: [
+        `No resolved OpenAlex source IDs in ${sourceInfo.source} source map. Run /api/resolve-sources after configuring OPENALEX_API_KEY and OPENALEX_MAILTO.`
+      ],
       days,
       maxResults
     });
+    latest.metadata = {
+      ...(latest.metadata ?? {}),
+      diagnosticFallback: true,
+      activeSourceMap: sourceInfo.source
+    };
+  } else {
+    try {
+      latest = await fetchLatest(sourceMap, {
+        days,
+        maxResults,
+        env: {
+          OPENALEX_API_KEY: getEnv("OPENALEX_API_KEY"),
+          OPENALEX_MAILTO: getEnv("OPENALEX_MAILTO")
+        },
+        maxPagesPerChunk
+      });
+    } catch (error) {
+      latest = makeFallback({
+        sourceMap,
+        errors: [`OpenAlex update failed: ${(error as Error).message}`],
+        days,
+        maxResults
+      });
+      latest.metadata = {
+        ...(latest.metadata ?? {}),
+        diagnosticFallback: true,
+        activeSourceMap: sourceInfo.source
+      };
+    }
   }
+
+  const articleFetchAt = String(latest.metadata?.generated_at ?? new Date().toISOString());
+  const errors = [...new Set([...(latest.status.errors ?? []), ...sourceErrors])];
+  latest.status = extendStatus(latest.status, sourceInfo, latest.items.length, articleFetchAt, errors);
 
   let blobStored = false;
   try {
@@ -69,8 +83,9 @@ export async function runLatestUpdate() {
   }
 
   return {
-    ok: blobStored,
+    ok: blobStored && sourceInfo.stats.resolvedSourceCount > 0 && (errors.length === 0 || latest.items.length > 0),
     blobStored,
+    activeSourceMap: sourceInfo.source,
     status: latest.status,
     itemCount: latest.items.length
   };

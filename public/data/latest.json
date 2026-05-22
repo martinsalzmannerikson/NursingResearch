@@ -9,10 +9,18 @@
   },
   "status": {
     "lastUpdated": "2026-05-22T13:05:36.964Z",
+    "lastArticleFetchAt": "2026-05-22T13:05:36.964Z",
+    "lastSourceResolutionAt": null,
+    "activeSourceMap": "static",
     "itemCount": 0,
     "resolvedSourceCount": 0,
     "unresolvedJournalCount": 366,
+    "updateFrequency": "daily",
+    "schedule": "0 5 * * *",
     "errors": [
+      "No resolved OpenAlex source IDs."
+    ],
+    "openAlexErrors": [
       "No resolved OpenAlex source IDs."
     ]
   },

@@ -36,7 +36,7 @@ The OpenAlex/ISSN fields are blank by design. Your job is to build code that res
 
 ## Target
 
-Create a site that monitors the latest research from all journals in the CSV and updates once per hour on Netlify.
+Create a site that monitors the latest research from all journals in the CSV and updates once per day on Netlify.
 
 The functional structure should resemble this reference page: a retro terminal-like research monitor with a prominent header, status line, research item feed, filters, and “load more” behavior. Do not clone the code or branding. Recreate the structure and behavior in an original implementation.
 
@@ -165,7 +165,7 @@ Create a scheduled function:
 
 It should:
 
-- run hourly using `export const config = { schedule: "@hourly" }`
+- run daily using `export const config = { schedule: "0 5 * * *" }`
 - fetch the latest works using the same logic as `scripts/fetch-latest.mjs`
 - store the JSON result in Netlify Blobs under a stable key, for example:
   - store: `nursing-research-monitor`
@@ -322,7 +322,7 @@ RECENT_DAYS=90
 MAX_RESULTS=1000
 ```
 
-If `OPENALEX_API_KEY` is absent, allow local development with unauthenticated OpenAlex requests, but warn that an API key is recommended for production-scale hourly operation.
+If `OPENALEX_API_KEY` is absent, allow local development with unauthenticated OpenAlex requests, but warn that an API key is recommended for production-scale daily operation.
 
 ## Netlify configuration
 
@@ -343,7 +343,7 @@ Write a README that explains:
 - how to install and run locally
 - how to attach the CSV
 - how to resolve OpenAlex sources
-- how to run the hourly update locally/manually
+- how to run the daily update locally/manually
 - how to deploy on Netlify
 - how to set environment variables
 - what limitations remain, especially unresolved journal-source matches
@@ -357,7 +357,7 @@ The project is complete only when:
 - the CSV is parsed correctly
 - `public/data/latest.json` is generated successfully, or a clear fallback dataset is generated if no network is available
 - Netlify functions compile
-- scheduled update code exists and uses `@hourly`
+- scheduled update code exists and uses `0 5 * * *`
 - the app handles API failures gracefully
 - tests pass
 - there are no TODO placeholders for core functionality
