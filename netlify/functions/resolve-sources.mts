@@ -99,9 +99,14 @@ export default async (request: Request) => {
   const apiKey = getEnv("OPENALEX_API_KEY");
   const mailto = getEnv("OPENALEX_MAILTO");
   if (!apiKey || !mailto) {
+    const missingKeys = [
+      !apiKey ? "OPENALEX_API_KEY" : "",
+      !mailto ? "OPENALEX_MAILTO" : ""
+    ].filter(Boolean);
     return jsonResponse(
       {
-        error: "OPENALEX_API_KEY and OPENALEX_MAILTO must be configured before resolving sources."
+        error: `Missing required OpenAlex environment variables: ${missingKeys.join(", ")}.`,
+        missingKeys
       },
       { status: 503 }
     );
