@@ -69,7 +69,7 @@ export async function runLatestUpdate() {
   }
 
   return {
-    ok: latest.status.errors.length === 0 || latest.items.length > 0,
+    ok: blobStored,
     blobStored,
     status: latest.status,
     itemCount: latest.items.length
