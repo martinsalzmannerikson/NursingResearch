@@ -1,0 +1,47 @@
+{
+  "name": "nursing-research-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "normalize": "node scripts/normalize-journals.mjs",
+    "resolve:sources": "node scripts/resolve-openalex-sources.mjs",
+    "fetch:latest": "node scripts/fetch-latest.mjs",
+    "lint": "eslint . && tsc -p tsconfig.functions.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc -b && vite build && tsc -p tsconfig.functions.json --noEmit",
+    "typecheck:functions": "tsc -p tsconfig.functions.json --noEmit",
+    "build:functions": "tsc -p tsconfig.functions.json --noEmit"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.0.9",
+    "@netlify/functions": "^4.2.5",
+    "csv-parse": "^6.1.0",
+    "lucide-react": "^0.511.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.27.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.15.21",
+    "@types/react": "^19.1.5",
+    "@types/react-dom": "^19.1.5",
+    "@typescript-eslint/eslint-plugin": "^8.32.1",
+    "@typescript-eslint/parser": "^8.32.1",
+    "@vitejs/plugin-react": "^4.5.0",
+    "eslint": "^9.27.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

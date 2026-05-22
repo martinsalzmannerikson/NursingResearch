@@ -1,0 +1,30 @@
+[build]
+  command = "npm run normalize && npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[functions."update-latest"]
+  schedule = "@hourly"
+
+[[redirects]]
+  from = "/api/latest"
+  to = "/.netlify/functions/latest"
+  status = 200
+
+[[redirects]]
+  from = "/api/status"
+  to = "/.netlify/functions/status"
+  status = 200
+
+[[redirects]]
+  from = "/api/refresh"
+  to = "/.netlify/functions/refresh"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

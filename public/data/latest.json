@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "generated_at": "2026-05-22T13:05:36.964Z",
+    "source_api": "OpenAlex",
+    "recentDays": 90,
+    "maxResults": 1000,
+    "fallback": true,
+    "message": "Live OpenAlex fetch did not produce article data; serving an explicit empty fallback."
+  },
+  "status": {
+    "lastUpdated": "2026-05-22T13:05:36.964Z",
+    "itemCount": 0,
+    "resolvedSourceCount": 0,
+    "unresolvedJournalCount": 366,
+    "errors": [
+      "No resolved OpenAlex source IDs."
+    ]
+  },
+  "diagnostics": {
+    "totalJournalCount": 366,
+    "resolvedSourceCount": 0,
+    "unresolvedJournalCount": 366,
+    "lowConfidenceCount": 0
+  },
+  "items": []
+}
