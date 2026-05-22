@@ -48,7 +48,6 @@ export default async (request: Request) => {
   const latest = blobLatest ?? staticLatest ?? { status: { errors: ["No latest dataset available."] }, items: [] };
   const blobStatus = await getBlobJson<Record<string, unknown>>("status.json");
   const sourceInfo = await loadSourceMapDocument();
-  const progress = sourceInfo.progress;
 
   const mergedStatus = cleanStatusErrors(
     {
@@ -59,9 +58,11 @@ export default async (request: Request) => {
       resolvedSourceCount: sourceInfo.stats.resolvedSourceCount,
       unresolvedJournalCount: sourceInfo.stats.unresolvedJournalCount,
       lastSourceResolutionAt: sourceInfo.generatedAt || null,
-      sourceResolutionProgress: progress?.nextStartIndex ?? progress?.currentIndex ?? null,
-      sourceResolutionCompleted: Boolean(progress?.completed),
-      sourceResolutionRemaining: progress?.remaining ?? null,
+      sourceResolutionEnabled: false,
+      sourceResolutionMode: "github-actions-or-local-script",
+      sourceResolutionProgress: null,
+      sourceResolutionCompleted: sourceInfo.stats.resolvedSourceCount > 0,
+      sourceResolutionRemaining: sourceInfo.stats.unresolvedJournalCount,
       updateFrequency: "daily",
       schedule: "0 5 * * *"
     },

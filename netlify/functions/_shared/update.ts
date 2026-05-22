@@ -29,7 +29,7 @@ export async function runLatestUpdate() {
     latest = makeFallback({
       sourceMap,
       errors: [
-        `No resolved OpenAlex source IDs in ${sourceInfo.source} source map. Run /api/resolve-sources after configuring OPENALEX_API_KEY and OPENALEX_MAILTO.`
+        `No resolved OpenAlex source IDs in ${sourceInfo.source} source map. Resolve sources with npm run resolve:sources or the GitHub Actions workflow, then commit src/data/openalex-source-map.json.`
       ],
       days,
       maxResults

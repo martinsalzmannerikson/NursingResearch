@@ -4,11 +4,6 @@ import path from "node:path";
 import { STORE_NAME, UPDATE_FREQUENCY, UPDATE_SCHEDULE } from "../../../scripts/lib/openalex.mjs";
 
 export const SOURCE_MAP_KEY = "openalex-source-map.json";
-export const SOURCE_MAP_PARTIAL_KEY = "openalex-source-map.partial.json";
-export const UNRESOLVED_JOURNALS_KEY = "unresolved-journals.json";
-export const UNRESOLVED_JOURNALS_PARTIAL_KEY = "unresolved-journals.partial.json";
-export const SOURCE_RESOLUTION_PROGRESS_KEY = "source-resolution-progress.json";
-export const SOURCE_RESOLUTION_STATUS_KEY = "source-resolution-status.json";
 
 export type SourceMapEntry = {
   journal_id?: string;
@@ -26,24 +21,7 @@ export type SourceMapDocument = {
   sources?: SourceMapEntry[];
 };
 
-export type SourceMapSource = "blob" | "static";
-
-export type SourceResolutionProgress = {
-  currentIndex?: number;
-  nextStartIndex?: number;
-  totalJournalCount?: number;
-  batchSize?: number;
-  processed?: number;
-  remaining?: number;
-  resolvedSourceCount?: number;
-  unresolvedJournalCount?: number;
-  completed?: boolean;
-  startedAt?: string;
-  updatedAt?: string;
-  lastCompletedJournal?: string;
-  stoppedEarly?: boolean;
-  error?: string;
-};
+export type SourceMapSource = "static" | "blob";
 
 export function summarizeSources(entries: SourceMapEntry[]) {
   return {
@@ -62,108 +40,53 @@ function asSourceMapDocument(value: unknown): SourceMapDocument | null {
   return Array.isArray(document.sources) ? document : null;
 }
 
-function asProgressDocument(value: unknown): SourceResolutionProgress | null {
-  if (!value || typeof value !== "object") return null;
-  return value as SourceResolutionProgress;
-}
-
-export async function getMonitorStore() {
-  return getStore({ name: STORE_NAME, consistency: "strong" });
-}
-
-export async function loadSourceResolutionProgress() {
+async function loadStaticSourceMap(errors: string[]) {
   try {
-    const store = await getMonitorStore();
-    return (
-      asProgressDocument(await store.get(SOURCE_RESOLUTION_PROGRESS_KEY, { type: "json" })) ??
-      asProgressDocument(await store.get(SOURCE_RESOLUTION_STATUS_KEY, { type: "json" }))
-    );
+    const sourceMapPath = path.join(process.cwd(), "src/data/openalex-source-map.json");
+    return asSourceMapDocument(JSON.parse(await readFile(sourceMapPath, "utf8")));
   } catch (error) {
-    console.warn(`Blob source resolution progress read failed: ${(error as Error).message}`);
+    errors.push(`Static source map read failed: ${(error as Error).message}`);
     return null;
   }
 }
 
-export async function loadSourceMapDocument() {
-  const errors: string[] = [];
-
+async function loadBlobSourceMap(errors: string[]) {
   try {
-    const store = await getMonitorStore();
-    const progress =
-      asProgressDocument(await store.get(SOURCE_RESOLUTION_PROGRESS_KEY, { type: "json" })) ??
-      asProgressDocument(await store.get(SOURCE_RESOLUTION_STATUS_KEY, { type: "json" }));
-    const partialDocument = asSourceMapDocument(await store.get(SOURCE_MAP_PARTIAL_KEY, { type: "json" }));
-    const blobDocument = asSourceMapDocument(await store.get(SOURCE_MAP_KEY, { type: "json" }));
-    if (progress && !progress.completed && partialDocument) {
-      const partialSources = partialDocument.sources ?? [];
-      const partialStats = summarizeSources(partialSources);
-      const finalStats = summarizeSources(blobDocument?.sources ?? []);
-      if (partialStats.resolvedSourceCount > finalStats.resolvedSourceCount) {
-        return {
-          source: "blob" as SourceMapSource,
-          document: partialDocument,
-          sources: partialSources,
-          generatedAt: String(partialDocument.metadata?.generated_at ?? progress.updatedAt ?? ""),
-          stats: partialStats,
-          progress,
-          sourceMapStage: "partial",
-          errors
-        };
-      }
-    }
-
-    if (blobDocument) {
-      const sources = blobDocument.sources ?? [];
-      return {
-        source: "blob" as SourceMapSource,
-        document: blobDocument,
-        sources,
-        generatedAt: String(blobDocument.metadata?.generated_at ?? ""),
-        progress,
-        sourceMapStage: "final",
-        stats: summarizeSources(sources),
-        errors
-      };
-    }
+    const store = getStore({ name: STORE_NAME, consistency: "strong" });
+    return asSourceMapDocument(await store.get(SOURCE_MAP_KEY, { type: "json" }));
   } catch (error) {
     errors.push(`Blob source map read failed: ${(error as Error).message}`);
+    return null;
   }
+}
 
-  try {
-    const sourceMapPath = path.join(process.cwd(), "src/data/openalex-source-map.json");
-    const staticDocument = asSourceMapDocument(JSON.parse(await readFile(sourceMapPath, "utf8")));
-    if (staticDocument) {
-      const sources = staticDocument.sources ?? [];
-      return {
-        source: "static" as SourceMapSource,
-        document: staticDocument,
-        sources,
-        generatedAt: String(staticDocument.metadata?.generated_at ?? ""),
-        progress: await loadSourceResolutionProgress(),
-        sourceMapStage: "static",
-        stats: summarizeSources(sources),
-        errors
-      };
-    }
-  } catch (error) {
-    errors.push(`Static source map read failed: ${(error as Error).message}`);
-  }
-
+function sourceInfo(source: SourceMapSource, document: SourceMapDocument, errors: string[]) {
+  const sources = document.sources ?? [];
   return {
-    source: "static" as SourceMapSource,
-    document: { metadata: {}, sources: [] },
-    sources: [],
-    generatedAt: "",
-    progress: await loadSourceResolutionProgress(),
-    sourceMapStage: "static",
-    stats: summarizeSources([]),
+    source,
+    document,
+    sources,
+    generatedAt: String(document.metadata?.generated_at ?? ""),
+    sourceMapStage: "final",
+    stats: summarizeSources(sources),
     errors
   };
 }
 
+export async function loadSourceMapDocument() {
+  const errors: string[] = [];
+  const staticDocument = await loadStaticSourceMap(errors);
+  if (staticDocument) return sourceInfo("static", staticDocument, errors);
+
+  const blobDocument = await loadBlobSourceMap(errors);
+  if (blobDocument) return sourceInfo("blob", blobDocument, errors);
+
+  return sourceInfo("static", { metadata: {}, sources: [] }, errors);
+}
+
 export function extendStatus(
   status: Record<string, unknown>,
-  sourceInfo: Awaited<ReturnType<typeof loadSourceMapDocument>>,
+  sourceInfoValue: Awaited<ReturnType<typeof loadSourceMapDocument>>,
   itemCount: number,
   articleFetchAt: string | null,
   errors: string[]
@@ -172,15 +95,17 @@ export function extendStatus(
     ...status,
     lastUpdated: articleFetchAt ?? status.lastUpdated ?? null,
     lastArticleFetchAt: articleFetchAt,
-    activeSourceMap: sourceInfo.source,
-    totalJournalCount: sourceInfo.stats.totalJournalCount,
-    resolvedSourceCount: sourceInfo.stats.resolvedSourceCount,
-    unresolvedJournalCount: sourceInfo.stats.unresolvedJournalCount,
-    lastSourceResolutionAt: sourceInfo.generatedAt || null,
+    activeSourceMap: sourceInfoValue.source,
+    totalJournalCount: sourceInfoValue.stats.totalJournalCount,
+    resolvedSourceCount: sourceInfoValue.stats.resolvedSourceCount,
+    unresolvedJournalCount: sourceInfoValue.stats.unresolvedJournalCount,
+    lastSourceResolutionAt: sourceInfoValue.generatedAt || null,
     itemCount,
-    sourceResolutionProgress: sourceInfo.progress?.nextStartIndex ?? sourceInfo.progress?.currentIndex ?? null,
-    sourceResolutionCompleted: Boolean(sourceInfo.progress?.completed),
-    sourceResolutionRemaining: sourceInfo.progress?.remaining ?? null,
+    sourceResolutionEnabled: false,
+    sourceResolutionMode: "github-actions-or-local-script",
+    sourceResolutionProgress: null,
+    sourceResolutionCompleted: sourceInfoValue.stats.resolvedSourceCount > 0,
+    sourceResolutionRemaining: sourceInfoValue.stats.unresolvedJournalCount,
     updateFrequency: UPDATE_FREQUENCY,
     schedule: UPDATE_SCHEDULE,
     errors,

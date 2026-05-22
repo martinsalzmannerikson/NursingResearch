@@ -72,7 +72,19 @@ netlify dev
 
 ## Manual Operations
 
-Set a non-default `REFRESH_TOKEN`, then call:
+Source resolution must run outside Netlify. Use either the local script:
+
+```bash
+npm run normalize
+npm run resolve:sources
+git add src/data/journals.json src/data/openalex-source-map.json src/data/unresolved-journals.csv
+git commit -m "Update OpenAlex source map"
+git push
+```
+
+or run the GitHub Actions workflow **Resolve OpenAlex Sources** from the repository Actions tab. The workflow uses `OPENALEX_API_KEY` and `OPENALEX_MAILTO` GitHub secrets, writes `src/data/openalex-source-map.json`, and commits the updated static source map.
+
+After at least one source has been resolved and committed, set a non-default `REFRESH_TOKEN`, then call:
 
 ```bash
 curl "https://YOUR_SITE.netlify.app/api/refresh?token=YOUR_TOKEN"
@@ -85,22 +97,7 @@ curl -H "Authorization: Bearer YOUR_TOKEN" "https://YOUR_SITE.netlify.app/api/re
 ```
 
 The endpoint never returns the secret value.
-
-Resolve OpenAlex sources before the first article refresh:
-
-```bash
-curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
-```
-
-The protected resolver is incremental. Each call processes one small batch, stores progress in Netlify Blobs, and returns `processed`, `remaining`, `resolvedSourceCount`, `unresolvedJournalCount`, `completed`, `nextStartIndex`, and `lastCompletedJournal`. Resolving all 366 journals may require multiple calls:
-
-```bash
-curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
-curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
-curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
-```
-
-Continue until `completed` is `true`, then run `/api/refresh`. Article refresh remains disabled until at least one OpenAlex source has been resolved successfully.
+`/api/resolve-sources` is intentionally disabled on Netlify to avoid consuming function runtime.
 
 ## Environment Variables
 
@@ -113,11 +110,10 @@ REFRESH_TOKEN=change-me
 RECENT_DAYS=90
 MAX_RESULTS=1000
 OPENALEX_MAX_PAGES_PER_CHUNK=1
-OPENALEX_RESOLVE_BATCH_SIZE=10
 OPENALEX_RESOLVE_DELAY_MS=750
 ```
 
-`OPENALEX_API_KEY` is optional for static local UI development, but production source resolution and daily refreshes should use both `OPENALEX_API_KEY` and `OPENALEX_MAILTO`.
+`OPENALEX_API_KEY`, `OPENALEX_MAILTO`, and `OPENALEX_RESOLVE_DELAY_MS` are used by local/GitHub Actions source resolution. Netlify production does not run source resolution.
 
 ## Netlify Deploy
 
@@ -127,49 +123,52 @@ OPENALEX_RESOLVE_DELAY_MS=750
 - publish directory: `dist`
 - functions directory: `netlify/functions`
 - scheduled function: `update-latest` with `0 5 * * *` for daily updates at 05:00 UTC
-- API redirects for `/api/latest`, `/api/status`, `/api/refresh`, and `/api/resolve-sources`
+- API redirects for `/api/latest`, `/api/status`, and `/api/refresh`
+- `/api/resolve-sources` returns a static disabled response and does not invoke a function
 
 Set environment variables in the Netlify UI or CLI before production deploy.
 
 ## Production Operating Sequence
 
-A. Add Netlify environment variables:
+A. Add GitHub repository secrets for the source-resolution workflow:
 
 ```bash
 OPENALEX_API_KEY
 OPENALEX_MAILTO
+```
+
+B. Run **Resolve OpenAlex Sources** in GitHub Actions, or run `npm run resolve:sources` locally and commit:
+
+```bash
+src/data/openalex-source-map.json
+src/data/unresolved-journals.csv
+```
+
+C. Add Netlify environment variables:
+
+```bash
 REFRESH_TOKEN
 RECENT_DAYS=90
 MAX_RESULTS=1000
 OPENALEX_MAX_PAGES_PER_CHUNK=1
-OPENALEX_RESOLVE_BATCH_SIZE=10
-OPENALEX_RESOLVE_DELAY_MS=750
 ```
 
-B. Deploy production.
+D. Deploy production.
 
-C. Run source resolution manually:
-
-```text
-https://nursing-research-monitor.netlify.app/api/resolve-sources?token=YOUR_REFRESH_TOKEN
-```
-
-Repeat the resolver URL until `completed` is `true` or until `/api/status` reports `sourceResolutionRemaining: 0`.
-
-D. Then run article refresh manually:
+E. Run article refresh manually:
 
 ```text
 https://nursing-research-monitor.netlify.app/api/refresh?token=YOUR_REFRESH_TOKEN
 ```
 
-E. Check:
+F. Check:
 
 ```text
 https://nursing-research-monitor.netlify.app/api/status
 https://nursing-research-monitor.netlify.app/api/latest
 ```
 
-F. Confirm that the scheduled function updates once per day at 05:00 UTC.
+G. Confirm that the scheduled function updates once per day at 05:00 UTC.
 
 ## Checks
 

@@ -63,6 +63,8 @@ export const latestPayload: LatestPayload = {
     totalJournalCount: 366,
     resolvedSourceCount: 300,
     unresolvedJournalCount: 66,
+    sourceResolutionEnabled: false,
+    sourceResolutionMode: "github-actions-or-local-script",
     sourceResolutionProgress: 366,
     sourceResolutionCompleted: true,
     sourceResolutionRemaining: 0,

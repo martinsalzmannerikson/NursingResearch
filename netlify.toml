@@ -11,8 +11,9 @@
 
 [[redirects]]
   from = "/api/resolve-sources"
-  to = "/.netlify/functions/resolve-sources"
-  status = 200
+  to = "/api-disabled.json"
+  status = 404
+  force = true
 
 [[redirects]]
   from = "/api/latest"

@@ -126,8 +126,8 @@ export default function App({ initialData }: AppProps) {
           <StatusTile label="SOURCES" value={String(data?.status.resolvedSourceCount ?? 0)} />
           <StatusTile label="UNRESOLVED" value={String(data?.status.unresolvedJournalCount ?? 0)} />
           <StatusTile
-            label="RESOLVE"
-            value={`${data?.status.sourceResolutionProgress ?? 0}/${data?.status.totalJournalCount ?? 366}`}
+            label="MAP"
+            value={`${data?.status.resolvedSourceCount ?? 0}/${data?.status.totalJournalCount ?? 366}`}
           />
           <button className="icon-button" type="button" onClick={refresh} aria-label="Refresh monitor data">
             <RefreshCw size={18} aria-hidden="true" />
@@ -220,8 +220,8 @@ export default function App({ initialData }: AppProps) {
                 <>
                   <h2>No OpenAlex journal sources have been resolved yet</h2>
                   <p>
-                    No OpenAlex journal sources have been resolved yet. Add OPENALEX_API_KEY and OPENALEX_MAILTO in
-                    Netlify, then run the protected source resolver.
+                    No OpenAlex journal sources have been resolved yet. Run the GitHub Actions source-resolution workflow
+                    or `npm run resolve:sources` locally, then commit `src/data/openalex-source-map.json`.
                   </p>
                 </>
               ) : (
@@ -270,9 +270,8 @@ export default function App({ initialData }: AppProps) {
                 {data?.status.schedule ?? "0 5 * * *"}.
               </p>
               <p>
-                Source resolution progress: {data?.status.sourceResolutionProgress ?? 0} processed,{" "}
-                {data?.status.sourceResolutionRemaining ?? data?.status.unresolvedJournalCount ?? 0} remaining.
-                Completed: {data?.status.sourceResolutionCompleted ? "yes" : "no"}.
+                Source resolution mode: {data?.status.sourceResolutionMode ?? "github-actions-or-local-script"}.
+                Netlify resolver enabled: {data?.status.sourceResolutionEnabled ? "yes" : "no"}.
               </p>
               {data?.status.errors?.length ? (
                 <ul>

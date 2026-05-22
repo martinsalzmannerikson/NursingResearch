@@ -1,0 +1,4 @@
+{
+  "error": "source_resolution_disabled",
+  "message": "OpenAlex source resolution is disabled on Netlify. Run npm run resolve:sources locally or use the GitHub Actions source-resolution workflow, then commit src/data/openalex-source-map.json."
+}

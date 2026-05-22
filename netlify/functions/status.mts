@@ -41,7 +41,6 @@ export default async (request: Request) => {
     sourceInfo.stats.resolvedSourceCount
   );
   const lastArticleFetchAt = String(articleStatus.lastArticleFetchAt ?? articleStatus.lastUpdated ?? "") || null;
-  const progress = sourceInfo.progress;
 
   return jsonResponse(
     {
@@ -53,9 +52,11 @@ export default async (request: Request) => {
       lastArticleFetchAt,
       itemCount: Number(articleStatus.itemCount ?? 0),
       totalJournalCount: sourceInfo.stats.totalJournalCount,
-      sourceResolutionProgress: progress?.nextStartIndex ?? progress?.currentIndex ?? null,
-      sourceResolutionCompleted: Boolean(progress?.completed),
-      sourceResolutionRemaining: progress?.remaining ?? null,
+      sourceResolutionEnabled: false,
+      sourceResolutionMode: "github-actions-or-local-script",
+      sourceResolutionProgress: null,
+      sourceResolutionCompleted: sourceInfo.stats.resolvedSourceCount > 0,
+      sourceResolutionRemaining: sourceInfo.stats.unresolvedJournalCount,
       updateFrequency: "daily",
       schedule: "0 5 * * *",
       errors,

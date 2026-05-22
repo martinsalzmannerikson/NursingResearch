@@ -27,7 +27,7 @@ describe("Nursing Research Monitor smoke tests", () => {
       />
     );
     expect(screen.getByRole("heading", { name: /No OpenAlex journal sources have been resolved yet/i })).toBeInTheDocument();
-    expect(screen.getByText(/Add OPENALEX_API_KEY and OPENALEX_MAILTO in Netlify/i)).toBeInTheDocument();
+    expect(screen.getByText(/GitHub Actions source-resolution workflow/i)).toBeInTheDocument();
   });
 
   it("loads static fallback through the API helper path", async () => {

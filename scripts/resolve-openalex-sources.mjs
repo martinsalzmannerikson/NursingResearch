@@ -14,14 +14,23 @@ const manifest = JSON.parse(await readFile(inputPath, "utf8"));
 const journals = manifest.journals.filter((journal) => journal.include_in_monitor);
 const entries = [];
 let disabledReason = "";
+const delayMs = Number(process.env.OPENALEX_RESOLVE_DELAY_MS || 750);
 
 console.log(`Resolving OpenAlex sources for ${journals.length} journals.`);
 if (!process.env.OPENALEX_API_KEY) {
   console.warn("OPENALEX_API_KEY is not set. Continuing with unauthenticated OpenAlex requests.");
 }
+if (!process.env.OPENALEX_MAILTO) {
+  console.warn("OPENALEX_MAILTO is not set. Set it for polite OpenAlex API usage.");
+}
 
 for (const [index, journal] of journals.entries()) {
-  const entry = await resolveJournalSource(journal, { disabledReason });
+  const entry = await resolveJournalSource(journal, {
+    disabledReason,
+    delayMs,
+    acceptLowConfidence: false,
+    env: process.env
+  });
   entries.push(entry);
   const status = entry.openalex_source_id ? `${entry.status} ${entry.openalex_source_key}` : "unresolved";
   console.log(`[${index + 1}/${journals.length}] ${journal.journal_name}: ${status}`);

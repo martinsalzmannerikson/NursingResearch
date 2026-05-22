@@ -480,8 +480,10 @@ export function latestFallback({ sourceMap = [], errors = [], days = 90, maxResu
       totalJournalCount: stats.totalJournalCount,
       resolvedSourceCount: stats.resolvedSourceCount,
       unresolvedJournalCount: stats.unresolvedJournalCount,
-      sourceResolutionProgress: 0,
-      sourceResolutionCompleted: false,
+      sourceResolutionEnabled: false,
+      sourceResolutionMode: "github-actions-or-local-script",
+      sourceResolutionProgress: null,
+      sourceResolutionCompleted: stats.resolvedSourceCount > 0,
       sourceResolutionRemaining: stats.unresolvedJournalCount,
       errors: errors.length ? errors : ["No resolved source IDs or no OpenAlex results were available."],
       openAlexErrors: errors.length ? errors : ["No resolved source IDs or no OpenAlex results were available."]

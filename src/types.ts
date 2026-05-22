@@ -31,6 +31,8 @@ export type MonitorStatus = {
   totalJournalCount?: number;
   resolvedSourceCount: number;
   unresolvedJournalCount: number;
+  sourceResolutionEnabled?: boolean;
+  sourceResolutionMode?: string;
   sourceResolutionProgress?: number | null;
   sourceResolutionCompleted?: boolean;
   sourceResolutionRemaining?: number | null;

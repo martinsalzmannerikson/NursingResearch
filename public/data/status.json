@@ -7,15 +7,17 @@
   "totalJournalCount": 366,
   "resolvedSourceCount": 0,
   "unresolvedJournalCount": 366,
-  "sourceResolutionProgress": 0,
+  "sourceResolutionEnabled": false,
+  "sourceResolutionMode": "github-actions-or-local-script",
+  "sourceResolutionProgress": null,
   "sourceResolutionCompleted": false,
   "sourceResolutionRemaining": 366,
   "updateFrequency": "daily",
   "schedule": "0 5 * * *",
   "errors": [
-    "No resolved OpenAlex source IDs."
+    "No resolved OpenAlex source IDs. Resolve sources locally or with GitHub Actions, then commit src/data/openalex-source-map.json."
   ],
   "openAlexErrors": [
-    "No resolved OpenAlex source IDs."
+    "No resolved OpenAlex source IDs. Resolve sources locally or with GitHub Actions, then commit src/data/openalex-source-map.json."
   ]
 }
