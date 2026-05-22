@@ -9,6 +9,11 @@ const cacheHeaders = {
   "Cache-Control": "public, max-age=60, stale-while-revalidate=600"
 };
 
+function cleanStatusErrors(errors: string[], resolvedSourceCount: number) {
+  if (resolvedSourceCount === 0) return errors;
+  return errors.filter((error) => !/No resolved OpenAlex source IDs|No resolved source IDs/i.test(error));
+}
+
 export default async (request: Request) => {
   if (request.method !== "GET") {
     return jsonResponse({ error: "Method not allowed" }, { status: 405, headers: cacheHeaders });
@@ -28,10 +33,13 @@ export default async (request: Request) => {
     articleStatus = (await readStaticJson<Record<string, unknown>>("public/data/status.json")) ?? {};
   }
 
-  const errors = [
-    ...((Array.isArray(articleStatus.errors) ? articleStatus.errors : []) as string[]),
-    ...sourceInfo.errors
-  ];
+  const errors = cleanStatusErrors(
+    [
+      ...((Array.isArray(articleStatus.errors) ? articleStatus.errors : []) as string[]),
+      ...sourceInfo.errors
+    ],
+    sourceInfo.stats.resolvedSourceCount
+  );
   const lastArticleFetchAt = String(articleStatus.lastArticleFetchAt ?? articleStatus.lastUpdated ?? "") || null;
   const progress = sourceInfo.progress;
 

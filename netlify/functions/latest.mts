@@ -25,6 +25,19 @@ async function getBlobJson<T>(key: string) {
   }
 }
 
+function cleanStatusErrors(status: Record<string, unknown>, resolvedSourceCount: number) {
+  if (resolvedSourceCount === 0 || !Array.isArray(status.errors)) return status;
+  const errors = (status.errors as string[]).filter(
+    (error) => !/No resolved OpenAlex source IDs|No resolved source IDs/i.test(error)
+  );
+  const openAlexErrors = Array.isArray(status.openAlexErrors)
+    ? (status.openAlexErrors as string[]).filter(
+        (error) => !/No resolved OpenAlex source IDs|No resolved source IDs/i.test(error)
+      )
+    : status.openAlexErrors;
+  return { ...status, errors, openAlexErrors };
+}
+
 export default async (request: Request) => {
   if (request.method !== "GET") {
     return jsonResponse({ error: "Method not allowed" }, { status: 405, headers: cacheHeaders });
@@ -37,23 +50,28 @@ export default async (request: Request) => {
   const sourceInfo = await loadSourceMapDocument();
   const progress = sourceInfo.progress;
 
+  const mergedStatus = cleanStatusErrors(
+    {
+      ...(latest.status ?? {}),
+      ...(blobStatus ?? {}),
+      activeSourceMap: sourceInfo.source,
+      totalJournalCount: sourceInfo.stats.totalJournalCount,
+      resolvedSourceCount: sourceInfo.stats.resolvedSourceCount,
+      unresolvedJournalCount: sourceInfo.stats.unresolvedJournalCount,
+      lastSourceResolutionAt: sourceInfo.generatedAt || null,
+      sourceResolutionProgress: progress?.nextStartIndex ?? progress?.currentIndex ?? null,
+      sourceResolutionCompleted: Boolean(progress?.completed),
+      sourceResolutionRemaining: progress?.remaining ?? null,
+      updateFrequency: "daily",
+      schedule: "0 5 * * *"
+    },
+    sourceInfo.stats.resolvedSourceCount
+  );
+
   return jsonResponse(
     {
       ...latest,
-      status: {
-        ...(latest.status ?? {}),
-        ...(blobStatus ?? {}),
-        activeSourceMap: sourceInfo.source,
-        totalJournalCount: sourceInfo.stats.totalJournalCount,
-        resolvedSourceCount: sourceInfo.stats.resolvedSourceCount,
-        unresolvedJournalCount: sourceInfo.stats.unresolvedJournalCount,
-        lastSourceResolutionAt: sourceInfo.generatedAt || null,
-        sourceResolutionProgress: progress?.nextStartIndex ?? progress?.currentIndex ?? null,
-        sourceResolutionCompleted: Boolean(progress?.completed),
-        sourceResolutionRemaining: progress?.remaining ?? null,
-        updateFrequency: "daily",
-        schedule: "0 5 * * *"
-      }
+      status: mergedStatus
     },
     { headers: cacheHeaders }
   );
