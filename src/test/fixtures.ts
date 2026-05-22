@@ -60,8 +60,12 @@ export const latestPayload: LatestPayload = {
     lastSourceResolutionAt: "2026-05-22T11:00:00Z",
     activeSourceMap: "blob",
     itemCount: 2,
+    totalJournalCount: 366,
     resolvedSourceCount: 300,
     unresolvedJournalCount: 66,
+    sourceResolutionProgress: 366,
+    sourceResolutionCompleted: true,
+    sourceResolutionRemaining: 0,
     updateFrequency: "daily",
     schedule: "0 5 * * *",
     errors: []

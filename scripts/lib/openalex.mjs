@@ -477,8 +477,12 @@ export function latestFallback({ sourceMap = [], errors = [], days = 90, maxResu
       updateFrequency: UPDATE_FREQUENCY,
       schedule: UPDATE_SCHEDULE,
       itemCount: 0,
+      totalJournalCount: stats.totalJournalCount,
       resolvedSourceCount: stats.resolvedSourceCount,
       unresolvedJournalCount: stats.unresolvedJournalCount,
+      sourceResolutionProgress: 0,
+      sourceResolutionCompleted: false,
+      sourceResolutionRemaining: stats.unresolvedJournalCount,
       errors: errors.length ? errors : ["No resolved source IDs or no OpenAlex results were available."],
       openAlexErrors: errors.length ? errors : ["No resolved source IDs or no OpenAlex results were available."]
     },

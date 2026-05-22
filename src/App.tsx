@@ -125,6 +125,10 @@ export default function App({ initialData }: AppProps) {
           <StatusTile label="VISIBLE" value={String(filteredItems.length)} />
           <StatusTile label="SOURCES" value={String(data?.status.resolvedSourceCount ?? 0)} />
           <StatusTile label="UNRESOLVED" value={String(data?.status.unresolvedJournalCount ?? 0)} />
+          <StatusTile
+            label="RESOLVE"
+            value={`${data?.status.sourceResolutionProgress ?? 0}/${data?.status.totalJournalCount ?? 366}`}
+          />
           <button className="icon-button" type="button" onClick={refresh} aria-label="Refresh monitor data">
             <RefreshCw size={18} aria-hidden="true" />
           </button>
@@ -264,6 +268,11 @@ export default function App({ initialData }: AppProps) {
                 {data?.status.unresolvedJournalCount ?? 0}. Active source map: {data?.status.activeSourceMap ?? "static"}.
                 Latest generated dataset contains {items.length} items. Daily update schedule:{" "}
                 {data?.status.schedule ?? "0 5 * * *"}.
+              </p>
+              <p>
+                Source resolution progress: {data?.status.sourceResolutionProgress ?? 0} processed,{" "}
+                {data?.status.sourceResolutionRemaining ?? data?.status.unresolvedJournalCount ?? 0} remaining.
+                Completed: {data?.status.sourceResolutionCompleted ? "yes" : "no"}.
               </p>
               {data?.status.errors?.length ? (
                 <ul>

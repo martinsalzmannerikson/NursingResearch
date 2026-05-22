@@ -33,6 +33,7 @@ export default async (request: Request) => {
     ...sourceInfo.errors
   ];
   const lastArticleFetchAt = String(articleStatus.lastArticleFetchAt ?? articleStatus.lastUpdated ?? "") || null;
+  const progress = sourceInfo.progress;
 
   return jsonResponse(
     {
@@ -43,6 +44,10 @@ export default async (request: Request) => {
       lastSourceResolutionAt: sourceInfo.generatedAt || null,
       lastArticleFetchAt,
       itemCount: Number(articleStatus.itemCount ?? 0),
+      totalJournalCount: sourceInfo.stats.totalJournalCount,
+      sourceResolutionProgress: progress?.nextStartIndex ?? progress?.currentIndex ?? null,
+      sourceResolutionCompleted: Boolean(progress?.completed),
+      sourceResolutionRemaining: progress?.remaining ?? null,
       updateFrequency: "daily",
       schedule: "0 5 * * *",
       errors,

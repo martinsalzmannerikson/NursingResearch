@@ -92,6 +92,16 @@ Resolve OpenAlex sources before the first article refresh:
 curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
 ```
 
+The protected resolver is incremental. Each call processes one small batch, stores progress in Netlify Blobs, and returns `processed`, `remaining`, `resolvedSourceCount`, `unresolvedJournalCount`, `completed`, `nextStartIndex`, and `lastCompletedJournal`. Resolving all 366 journals may require multiple calls:
+
+```bash
+curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
+curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
+curl "https://YOUR_SITE.netlify.app/api/resolve-sources?token=YOUR_TOKEN"
+```
+
+Continue until `completed` is `true`, then run `/api/refresh`. Article refresh remains disabled until at least one OpenAlex source has been resolved successfully.
+
 ## Environment Variables
 
 Copy `.env.example` for local development:
@@ -103,6 +113,7 @@ REFRESH_TOKEN=change-me
 RECENT_DAYS=90
 MAX_RESULTS=1000
 OPENALEX_MAX_PAGES_PER_CHUNK=1
+OPENALEX_RESOLVE_BATCH_SIZE=10
 OPENALEX_RESOLVE_DELAY_MS=750
 ```
 
@@ -131,6 +142,7 @@ REFRESH_TOKEN
 RECENT_DAYS=90
 MAX_RESULTS=1000
 OPENALEX_MAX_PAGES_PER_CHUNK=1
+OPENALEX_RESOLVE_BATCH_SIZE=10
 OPENALEX_RESOLVE_DELAY_MS=750
 ```
 
@@ -141,6 +153,8 @@ C. Run source resolution manually:
 ```text
 https://nursing-research-monitor.netlify.app/api/resolve-sources?token=YOUR_REFRESH_TOKEN
 ```
+
+Repeat the resolver URL until `completed` is `true` or until `/api/status` reports `sourceResolutionRemaining: 0`.
 
 D. Then run article refresh manually:
 

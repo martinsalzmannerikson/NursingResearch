@@ -28,8 +28,12 @@ export type MonitorStatus = {
   lastSourceResolutionAt?: string | null;
   activeSourceMap?: "blob" | "static" | null;
   itemCount: number;
+  totalJournalCount?: number;
   resolvedSourceCount: number;
   unresolvedJournalCount: number;
+  sourceResolutionProgress?: number | null;
+  sourceResolutionCompleted?: boolean;
+  sourceResolutionRemaining?: number | null;
   updateFrequency?: "daily";
   schedule?: string;
   errors: string[];

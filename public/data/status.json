@@ -4,8 +4,12 @@
   "lastSourceResolutionAt": null,
   "activeSourceMap": "static",
   "itemCount": 0,
+  "totalJournalCount": 366,
   "resolvedSourceCount": 0,
   "unresolvedJournalCount": 366,
+  "sourceResolutionProgress": 0,
+  "sourceResolutionCompleted": false,
+  "sourceResolutionRemaining": 366,
   "updateFrequency": "daily",
   "schedule": "0 5 * * *",
   "errors": [

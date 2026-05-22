@@ -35,6 +35,7 @@ export default async (request: Request) => {
   const latest = blobLatest ?? staticLatest ?? { status: { errors: ["No latest dataset available."] }, items: [] };
   const blobStatus = await getBlobJson<Record<string, unknown>>("status.json");
   const sourceInfo = await loadSourceMapDocument();
+  const progress = sourceInfo.progress;
 
   return jsonResponse(
     {
@@ -43,9 +44,13 @@ export default async (request: Request) => {
         ...(latest.status ?? {}),
         ...(blobStatus ?? {}),
         activeSourceMap: sourceInfo.source,
+        totalJournalCount: sourceInfo.stats.totalJournalCount,
         resolvedSourceCount: sourceInfo.stats.resolvedSourceCount,
         unresolvedJournalCount: sourceInfo.stats.unresolvedJournalCount,
         lastSourceResolutionAt: sourceInfo.generatedAt || null,
+        sourceResolutionProgress: progress?.nextStartIndex ?? progress?.currentIndex ?? null,
+        sourceResolutionCompleted: Boolean(progress?.completed),
+        sourceResolutionRemaining: progress?.remaining ?? null,
         updateFrequency: "daily",
         schedule: "0 5 * * *"
       }
