@@ -94,13 +94,14 @@ export default function App({ initialData }: AppProps) {
   return (
     <main className="crt-shell">
       <div className="scanlines" aria-hidden="true" />
+      <div className="site-credit">© Salzmann-Erikson, 2026</div>
       <section className="terminal-frame" aria-labelledby="monitor-title">
         <header className="boot-panel panel">
           <div className="boot-kicker">
             <Terminal size={18} aria-hidden="true" />
             **** NURSING RESEARCH TERMINAL V1 ****
           </div>
-          <h1 id="monitor-title">OMVÅRDNAD / NURSING RESEARCH MONITOR</h1>
+          <h1 id="monitor-title">NURSING RESEARCH MONITOR</h1>
           <div className="boot-grid">
             <span>LOAD "NURSING-RES",8,1</span>
             <span>SEARCHING... {filteredItems.length} ITEMS</span>

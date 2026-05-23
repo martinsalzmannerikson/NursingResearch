@@ -6,7 +6,8 @@ import { latestPayload } from "./test/fixtures";
 describe("Nursing Research Monitor smoke tests", () => {
   it("renders the home page, monitor title, and publication cards when data exists", async () => {
     render(<App initialData={latestPayload} />);
-    expect(screen.getByRole("heading", { name: /omvårdnad \/ nursing research monitor/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^nursing research monitor$/i })).toBeInTheDocument();
+    expect(screen.getByText(/© Salzmann-Erikson, 2026/i)).toBeInTheDocument();
     expect(screen.getByText(/Digital nursing education improves clinical reasoning/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Journal of Advanced Nursing/i).length).toBeGreaterThan(0);
   });

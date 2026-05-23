@@ -64,6 +64,17 @@ a {
   opacity: 0.36;
 }
 
+.site-credit {
+  width: min(1240px, 100%);
+  margin: 0 auto 8px;
+  position: relative;
+  z-index: 2;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: right;
+  text-shadow: 0 0 8px rgba(51, 230, 255, 0.22);
+}
+
 .terminal-frame {
   width: min(1240px, 100%);
   margin: 0 auto;
