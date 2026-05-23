@@ -457,7 +457,7 @@ function buildWorksUrl(sourceKeys, cursor, options = {}) {
   return url;
 }
 
-export function latestFallback({ sourceMap = [], errors = [], days = 90, maxResults = 1000 } = {}) {
+export function latestFallback({ sourceMap = [], errors = [], days = 180, maxResults = 1000 } = {}) {
   const stats = sourceMapStats(sourceMap);
   const lastUpdated = new Date().toISOString();
   return {
@@ -494,7 +494,7 @@ export function latestFallback({ sourceMap = [], errors = [], days = 90, maxResu
 }
 
 export async function fetchLatestWorks(sourceMap, options = {}) {
-  const days = Number(options.days || process.env.RECENT_DAYS || 90);
+  const days = Number(options.days || process.env.RECENT_DAYS || 180);
   const maxResults = Number(options.maxResults || process.env.MAX_RESULTS || 1000);
   const fetchedAt = new Date().toISOString();
   const fromDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);

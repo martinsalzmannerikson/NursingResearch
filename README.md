@@ -98,6 +98,9 @@ curl -H "Authorization: Bearer YOUR_TOKEN" "https://YOUR_SITE.netlify.app/api/re
 
 The endpoint never returns the secret value.
 `/api/resolve-sources` is intentionally disabled on Netlify to avoid consuming function runtime.
+`/api/journal-latest?journal=JOURNAL_NAME&days=180` performs a lightweight, cached OpenAlex lookup for one resolved
+journal. The frontend uses it when a journal filter is selected so journal-specific lists are not limited by the global
+dashboard cache.
 
 ## Environment Variables
 
@@ -107,9 +110,9 @@ Copy `.env.example` for local development:
 OPENALEX_API_KEY=
 OPENALEX_MAILTO=
 REFRESH_TOKEN=change-me
-RECENT_DAYS=90
-MAX_RESULTS=1000
-OPENALEX_MAX_PAGES_PER_CHUNK=2
+RECENT_DAYS=180
+MAX_RESULTS=5000
+OPENALEX_MAX_PAGES_PER_CHUNK=10
 OPENALEX_RESOLVE_DELAY_MS=750
 ```
 
@@ -123,7 +126,7 @@ OPENALEX_RESOLVE_DELAY_MS=750
 - publish directory: `dist`
 - functions directory: `netlify/functions`
 - scheduled function: `update-latest` with `0 5 * * *` for daily updates at 05:00 UTC
-- API redirects for `/api/latest`, `/api/status`, and `/api/refresh`
+- API redirects for `/api/latest`, `/api/status`, `/api/journal-latest`, and `/api/refresh`
 - `/api/resolve-sources` returns a static disabled response and does not invoke a function
 
 Set environment variables in the Netlify UI or CLI before production deploy.
@@ -148,9 +151,9 @@ C. Add Netlify environment variables:
 
 ```bash
 REFRESH_TOKEN
-RECENT_DAYS=90
-MAX_RESULTS=1000
-OPENALEX_MAX_PAGES_PER_CHUNK=2
+RECENT_DAYS=180
+MAX_RESULTS=5000
+OPENALEX_MAX_PAGES_PER_CHUNK=10
 ```
 
 D. Deploy production.

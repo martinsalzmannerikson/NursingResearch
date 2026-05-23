@@ -9,7 +9,8 @@ import {
   Terminal
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { loadLatestData } from "./lib/api";
+import journalsManifest from "./data/journals.json";
+import { loadJournalData, loadLatestData } from "./lib/api";
 import {
   compactAuthors,
   defaultFilters,
@@ -21,6 +22,9 @@ import {
 import type { LatestPayload, MonitorFilters, ResearchItem } from "./types";
 
 const visibleStep = 25;
+const manifestJournalNames = (journalsManifest.journals as Array<{ journal_name: string }>).map(
+  (journal) => journal.journal_name
+);
 
 function badgeLabel(item: ResearchItem) {
   const badges = [];
@@ -29,6 +33,22 @@ function badgeLabel(item: ResearchItem) {
   if (item.norwegian_level) badges.push(item.norwegian_level);
   if (item.is_oa) badges.push("OA");
   return badges;
+}
+
+function itemKey(item: ResearchItem) {
+  return (item.doi || item.openalex_id || item.id).toLowerCase();
+}
+
+function mergeResearchItems(primary: ResearchItem[], secondary: ResearchItem[]) {
+  const seen = new Set<string>();
+  const output: ResearchItem[] = [];
+  for (const item of [...secondary, ...primary]) {
+    const key = itemKey(item);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    output.push(item);
+  }
+  return output;
 }
 
 function useLatestData(initialData?: LatestPayload) {
@@ -55,15 +75,24 @@ type AppProps = {
 
 export default function App({ initialData }: AppProps) {
   const { data, loading, refresh } = useLatestData(initialData);
+  const [journalData, setJournalData] = useState<LatestPayload | null>(null);
+  const [journalLoading, setJournalLoading] = useState(false);
   const [filters, setFilters] = useState<MonitorFilters>(defaultFilters);
   const [visibleCount, setVisibleCount] = useState(visibleStep);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const items = useMemo(() => data?.items ?? [], [data]);
-  const journals = useMemo(() => uniqueSorted(items.map((item) => item.journal_name)), [items]);
-  const publishers = useMemo(() => uniqueSorted(items.map((item) => item.publisher)), [items]);
-  const filteredItems = useMemo(() => filterAndSortItems(items, filters), [items, filters]);
+  const activeItems = useMemo(
+    () => (filters.journal && journalData ? mergeResearchItems(items, journalData.items) : items),
+    [filters.journal, items, journalData]
+  );
+  const journals = useMemo(
+    () => uniqueSorted([...manifestJournalNames, ...items.map((item) => item.journal_name)]),
+    [items]
+  );
+  const publishers = useMemo(() => uniqueSorted(activeItems.map((item) => item.publisher)), [activeItems]);
+  const filteredItems = useMemo(() => filterAndSortItems(activeItems, filters), [activeItems, filters]);
   const visibleItems = filteredItems.slice(0, visibleCount);
   const lastUpdated = data?.status.lastUpdated ?? data?.metadata?.generated_at ?? null;
   const hasNoResolvedSources = !loading && (data?.status.resolvedSourceCount ?? 0) === 0 && (data?.status.itemCount ?? 0) === 0;
@@ -71,6 +100,27 @@ export default function App({ initialData }: AppProps) {
   useEffect(() => {
     setVisibleCount(visibleStep);
   }, [filters]);
+
+  useEffect(() => {
+    if (!filters.journal) {
+      setJournalData(null);
+      setJournalLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setJournalLoading(true);
+    loadJournalData(filters.journal, filters.days, fetch, controller.signal)
+      .then((payload) => setJournalData(payload))
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") setJournalData(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setJournalLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [filters.journal, filters.days]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -94,7 +144,7 @@ export default function App({ initialData }: AppProps) {
   return (
     <main className="crt-shell">
       <div className="scanlines" aria-hidden="true" />
-      <div className="site-credit">© Salzmann-Erikson, 2026</div>
+      <div className="site-credit">{"\u00A9"} Salzmann-Erikson, 2026</div>
       <section className="terminal-frame" aria-labelledby="monitor-title">
         <header className="boot-panel panel">
           <div className="boot-kicker">
@@ -147,6 +197,7 @@ export default function App({ initialData }: AppProps) {
               onChange={(value) => updateFilter("journal", value)}
               options={journals}
               allLabel="All journals"
+              allValue=""
             />
             <SelectField
               label="Publisher"
@@ -154,6 +205,7 @@ export default function App({ initialData }: AppProps) {
               onChange={(value) => updateFilter("publisher", value)}
               options={publishers}
               allLabel="All publishers"
+              allValue=""
             />
             <SelectField
               label="WoS"
@@ -211,10 +263,10 @@ export default function App({ initialData }: AppProps) {
             <div>
               <span className="prompt-mark">&gt;</span> LIST /PUBLICATIONS
             </div>
-            <span>{loading ? "SYNCING..." : `${visibleItems.length}/${filteredItems.length}`}</span>
+            <span>{loading || journalLoading ? "SYNCING..." : `${visibleItems.length}/${filteredItems.length}`}</span>
           </div>
 
-          {!loading && visibleItems.length === 0 ? (
+          {!loading && !journalLoading && visibleItems.length === 0 ? (
             <div className="empty-state panel">
               <Database size={28} aria-hidden="true" />
               {hasNoResolvedSources ? (
@@ -267,7 +319,8 @@ export default function App({ initialData }: AppProps) {
               <p>
                 Resolved sources: {data?.status.resolvedSourceCount ?? 0}. Unresolved journals:{" "}
                 {data?.status.unresolvedJournalCount ?? 0}. Active source map: {data?.status.activeSourceMap ?? "static"}.
-                Latest generated dataset contains {items.length} items. Daily update schedule:{" "}
+                Latest generated dataset contains {items.length} cached items. Selected journals are refreshed on demand
+                from OpenAlex for the active date window. Daily update schedule:{" "}
                 {data?.status.schedule ?? "0 5 * * *"}.
               </p>
               <p>
@@ -315,14 +368,15 @@ type SelectFieldProps = {
   options: string[];
   labels?: Record<string, string>;
   allLabel: string;
+  allValue?: string;
 };
 
-function SelectField({ label, value, onChange, options, labels = {}, allLabel }: SelectFieldProps) {
+function SelectField({ label, value, onChange, options, labels = {}, allLabel, allValue = "all" }: SelectFieldProps) {
   return (
     <label className="select-field">
       <span>{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)}>
-        {allLabel ? <option value="all">{allLabel}</option> : null}
+        {allLabel ? <option value={allValue}>{allLabel}</option> : null}
         {options.map((option) => (
           <option key={option} value={option}>
             {labels[option] ?? option}

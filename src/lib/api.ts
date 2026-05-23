@@ -22,8 +22,8 @@ function normalizePayload(payload: Partial<LatestPayload>): LatestPayload {
   };
 }
 
-async function fetchJson(fetchImpl: typeof fetch, url: string) {
-  const response = await fetchImpl(url, { headers: { Accept: "application/json" } });
+async function fetchJson(fetchImpl: typeof fetch, url: string, signal?: AbortSignal) {
+  const response = await fetchImpl(url, { headers: { Accept: "application/json" }, signal });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json();
 }
@@ -44,4 +44,14 @@ export async function loadLatestData(fetchImpl: typeof fetch = fetch): Promise<L
       });
     }
   }
+}
+
+export async function loadJournalData(
+  journal: string,
+  days: number,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<LatestPayload> {
+  const params = new URLSearchParams({ journal, days: String(days) });
+  return normalizePayload(await fetchJson(fetchImpl, `/api/journal-latest?${params}`, signal));
 }

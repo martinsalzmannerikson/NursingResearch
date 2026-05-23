@@ -6,9 +6,9 @@ import { fetchLatestWorks, latestFallback, STORE_NAME } from "../../../scripts/l
 export async function runLatestUpdate() {
   const sourceInfo = await loadSourceMapDocument();
   const sourceMap = sourceInfo.sources;
-  const days = Number(getEnv("RECENT_DAYS", "90"));
-  const maxResults = Number(getEnv("MAX_RESULTS", "1000"));
-  const maxPagesPerChunk = Math.max(2, Number(getEnv("OPENALEX_MAX_PAGES_PER_CHUNK", "2")) || 2);
+  const days = Math.max(180, Number(getEnv("RECENT_DAYS", "180")) || 180);
+  const maxResults = Math.max(5000, Number(getEnv("MAX_RESULTS", "5000")) || 5000);
+  const maxPagesPerChunk = Math.max(10, Number(getEnv("OPENALEX_MAX_PAGES_PER_CHUNK", "10")) || 10);
   let latest;
   const fetchLatest = fetchLatestWorks as (
     entries: unknown[],
