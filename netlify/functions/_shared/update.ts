@@ -8,7 +8,7 @@ export async function runLatestUpdate() {
   const sourceMap = sourceInfo.sources;
   const days = Number(getEnv("RECENT_DAYS", "90"));
   const maxResults = Number(getEnv("MAX_RESULTS", "1000"));
-  const maxPagesPerChunk = Number(getEnv("OPENALEX_MAX_PAGES_PER_CHUNK", "1"));
+  const maxPagesPerChunk = Math.max(2, Number(getEnv("OPENALEX_MAX_PAGES_PER_CHUNK", "2")) || 2);
   let latest;
   const fetchLatest = fetchLatestWorks as (
     entries: unknown[],

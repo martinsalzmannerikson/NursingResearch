@@ -76,9 +76,14 @@ function sourceInfo(source: SourceMapSource, document: SourceMapDocument, errors
 export async function loadSourceMapDocument() {
   const errors: string[] = [];
   const staticDocument = await loadStaticSourceMap(errors);
-  if (staticDocument) return sourceInfo("static", staticDocument, errors);
-
   const blobDocument = await loadBlobSourceMap(errors);
+
+  const staticResolved = staticDocument ? summarizeSources(staticDocument.sources ?? []).resolvedSourceCount : 0;
+  const blobResolved = blobDocument ? summarizeSources(blobDocument.sources ?? []).resolvedSourceCount : 0;
+
+  if (staticDocument && staticResolved > 0) return sourceInfo("static", staticDocument, errors);
+  if (blobDocument && blobResolved > 0) return sourceInfo("blob", blobDocument, errors);
+  if (staticDocument) return sourceInfo("static", staticDocument, errors);
   if (blobDocument) return sourceInfo("blob", blobDocument, errors);
 
   return sourceInfo("static", { metadata: {}, sources: [] }, errors);
