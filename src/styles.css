@@ -205,6 +205,57 @@ h1 {
   padding: 16px;
 }
 
+.brief-panel {
+  padding: 16px;
+}
+
+.brief-actions,
+.brief-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.brief-actions strong,
+.brief-error {
+  color: var(--danger);
+}
+
+.brief-actions button,
+.download-brief {
+  min-height: 38px;
+  border: 1px solid rgba(51, 230, 255, 0.38);
+  border-radius: 6px;
+  background: rgba(3, 20, 24, 0.92);
+  color: var(--cyan);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.brief-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.brief-status {
+  align-items: flex-start;
+  flex-direction: column;
+  border-top: 1px dashed rgba(51, 230, 255, 0.28);
+  padding-top: 12px;
+}
+
+.brief-status strong {
+  color: var(--green);
+}
+
 .filter-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -250,6 +301,21 @@ h1 {
 
 .publication-card {
   padding: 18px;
+}
+
+.select-article {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--cyan);
+  font-size: 0.82rem;
+}
+
+.select-article input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--green);
 }
 
 .publication-meta {

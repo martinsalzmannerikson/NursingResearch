@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { latestPayload } from "./test/fixtures";
@@ -15,6 +15,15 @@ describe("Nursing Research Monitor smoke tests", () => {
   it("renders an empty state when there are no articles", async () => {
     render(<App initialData={{ ...latestPayload, status: { ...latestPayload.status, itemCount: 0, resolvedSourceCount: 2 }, items: [] }} />);
     expect(screen.getByText(/No articles in current filter window/i)).toBeInTheDocument();
+  });
+
+  it("enables PDF brief generation after selecting an article", async () => {
+    render(<App initialData={latestPayload} />);
+    const button = screen.getByRole("button", { name: /Generate PDF brief/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(screen.getAllByLabelText(/Select for PDF brief/i)[0]);
+    expect(button).not.toBeDisabled();
+    expect(screen.getByText(/Selected 1\/6/i)).toBeInTheDocument();
   });
 
   it("renders the resolver guidance when no OpenAlex sources are resolved", async () => {

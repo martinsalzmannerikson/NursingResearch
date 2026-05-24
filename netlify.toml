@@ -36,6 +36,26 @@
   status = 200
 
 [[redirects]]
+  from = "/api/start-summary-job"
+  to = "/.netlify/functions/start-summary-job"
+  status = 200
+
+[[redirects]]
+  from = "/api/process-summary-background"
+  to = "/.netlify/functions/process-summary-background"
+  status = 200
+
+[[redirects]]
+  from = "/api/get-summary-status"
+  to = "/.netlify/functions/get-summary-status"
+  status = 200
+
+[[redirects]]
+  from = "/api/download-summary-pdf"
+  to = "/.netlify/functions/download-summary-pdf"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

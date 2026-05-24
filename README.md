@@ -114,9 +114,15 @@ RECENT_DAYS=180
 MAX_RESULTS=5000
 OPENALEX_MAX_PAGES_PER_CHUNK=10
 OPENALEX_RESOLVE_DELAY_MS=750
+MAX_ARTICLES_PER_BRIEF=6
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
+OPENROUTER_SITE_URL=
+OPENROUTER_APP_TITLE=Nursing Research Monitor
 ```
 
 `OPENALEX_API_KEY`, `OPENALEX_MAILTO`, and `OPENALEX_RESOLVE_DELAY_MS` are used by local/GitHub Actions source resolution. Netlify production does not run source resolution.
+`OPENROUTER_API_KEY` and `OPENROUTER_MODEL` are required for AI findings brief jobs. The model is read server-side only.
 
 ## Netlify Deploy
 
@@ -126,7 +132,7 @@ OPENALEX_RESOLVE_DELAY_MS=750
 - publish directory: `dist`
 - functions directory: `netlify/functions`
 - scheduled function: `update-latest` with `0 5 * * *` for daily updates at 05:00 UTC
-- API redirects for `/api/latest`, `/api/status`, `/api/journal-latest`, and `/api/refresh`
+- API redirects for `/api/latest`, `/api/status`, `/api/journal-latest`, `/api/refresh`, and AI brief job endpoints
 - `/api/resolve-sources` returns a static disabled response and does not invoke a function
 
 Set environment variables in the Netlify UI or CLI before production deploy.
@@ -154,6 +160,11 @@ REFRESH_TOKEN
 RECENT_DAYS=180
 MAX_RESULTS=5000
 OPENALEX_MAX_PAGES_PER_CHUNK=10
+MAX_ARTICLES_PER_BRIEF=6
+OPENROUTER_API_KEY
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
+OPENROUTER_SITE_URL=https://nursing-research-monitor.netlify.app
+OPENROUTER_APP_TITLE=Nursing Research Monitor
 ```
 
 D. Deploy production.
@@ -172,6 +183,32 @@ https://nursing-research-monitor.netlify.app/api/latest
 ```
 
 G. Confirm that the scheduled function updates once per day at 05:00 UTC.
+
+## AI Findings Brief MVP
+
+Users can select up to `MAX_ARTICLES_PER_BRIEF` articles and generate a PDF findings brief. The workflow is job based:
+
+- `POST /api/start-summary-job` validates selected article metadata, stores a queued job in Netlify Blobs, and invokes the background function.
+- `process-summary-background` checks DOI-first OpenAlex metadata, retrieves only legal OA locations reported by OpenAlex, extracts allowed Methods/Findings/Conclusions sections when reliable, calls OpenRouter, and stores the generated PDF in Netlify Blobs.
+- `GET /api/get-summary-status?jobId=...` returns job progress and source-status summaries without returning extracted article text.
+- `GET /api/download-summary-pdf?jobId=...` downloads the generated PDF.
+
+Fallback hierarchy:
+
+1. DOI + legal OA full text + reliable section extraction.
+2. DOI + legal OA full text but extraction failed, with warning and abstract fallback.
+3. Abstract only.
+4. Insufficient data, clearly marked in the source table.
+
+The app never uses subscription bypasses or Sci-Hub-style access. PDF parsing is conservative in this MVP: unsupported or unparsable full text falls back to abstract and records an extraction warning.
+
+Local testing for brief jobs should use Netlify Dev so Blobs and background functions are available:
+
+```bash
+netlify dev
+```
+
+Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in the Netlify Dev environment before generating a live brief.
 
 ## Checks
 

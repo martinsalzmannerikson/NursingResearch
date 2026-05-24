@@ -72,3 +72,41 @@ export type MonitorFilters = {
   days: 7 | 30 | 90 | 180;
   sort: SortMode;
 };
+
+export type BriefJobStatus = {
+  jobId: string;
+  status: "queued" | "running" | "completed" | "failed";
+  progress: {
+    step:
+      | "queued"
+      | "checking_open_access"
+      | "retrieving_fulltext"
+      | "extracting_sections"
+      | "summarising"
+      | "generating_pdf"
+      | "completed"
+      | "failed";
+    message: string;
+    completed: number;
+    total: number;
+  };
+  sourceStatusSummary?: {
+    oaFullTextUsed: number;
+    abstractOnly: number;
+    fulltextFoundButExtractionFailed: number;
+    noDoi: number;
+    insufficientData: number;
+  } | null;
+  articleSources?: Array<{
+    title: string;
+    doi: string;
+    sourceStatus: string;
+    oaStatus: string;
+    sectionsUsed: string[];
+    extractionWarnings: string[];
+    isRetracted: boolean;
+  }>;
+  errors: string[];
+  downloadAvailable: boolean;
+  downloadUrl: string | null;
+};

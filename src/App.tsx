@@ -4,13 +4,14 @@ import {
   Clipboard,
   Database,
   ExternalLink,
+  FileText,
   Filter,
   RefreshCw,
   Terminal
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import journalsManifest from "./data/journals.json";
-import { loadJournalData, loadLatestData } from "./lib/api";
+import { loadJournalData, loadLatestData, loadSummaryStatus, startSummaryJob } from "./lib/api";
 import {
   compactAuthors,
   defaultFilters,
@@ -19,9 +20,10 @@ import {
   formatDateTime,
   uniqueSorted
 } from "./lib/monitor";
-import type { LatestPayload, MonitorFilters, ResearchItem } from "./types";
+import type { BriefJobStatus, LatestPayload, MonitorFilters, ResearchItem } from "./types";
 
 const visibleStep = 25;
+const MAX_ARTICLES_PER_BRIEF = 6;
 const manifestJournalNames = (journalsManifest.journals as Array<{ journal_name: string }>).map(
   (journal) => journal.journal_name
 );
@@ -80,6 +82,10 @@ export default function App({ initialData }: AppProps) {
   const [filters, setFilters] = useState<MonitorFilters>(defaultFilters);
   const [visibleCount, setVisibleCount] = useState(visibleStep);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [briefStatus, setBriefStatus] = useState<BriefJobStatus | null>(null);
+  const [briefError, setBriefError] = useState("");
+  const [briefStarting, setBriefStarting] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const items = useMemo(() => data?.items ?? [], [data]);
@@ -94,6 +100,11 @@ export default function App({ initialData }: AppProps) {
   const publishers = useMemo(() => uniqueSorted(activeItems.map((item) => item.publisher)), [activeItems]);
   const filteredItems = useMemo(() => filterAndSortItems(activeItems, filters), [activeItems, filters]);
   const visibleItems = filteredItems.slice(0, visibleCount);
+  const selectedItems = useMemo(
+    () => activeItems.filter((item) => selectedIds.has(itemKey(item))),
+    [activeItems, selectedIds]
+  );
+  const selectedOverLimit = selectedItems.length > MAX_ARTICLES_PER_BRIEF;
   const lastUpdated = data?.status.lastUpdated ?? data?.metadata?.generated_at ?? null;
   const hasNoResolvedSources = !loading && (data?.status.resolvedSourceCount ?? 0) === 0 && (data?.status.itemCount ?? 0) === 0;
 
@@ -141,6 +152,49 @@ export default function App({ initialData }: AppProps) {
     setFilters((current) => ({ ...current, [key]: value }));
   };
 
+  const toggleSelected = (item: ResearchItem) => {
+    const key = itemKey(item);
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const generateBrief = async () => {
+    setBriefError("");
+    setBriefStatus(null);
+    setBriefStarting(true);
+    try {
+      const start = await startSummaryJob(selectedItems);
+      setBriefStatus({
+        jobId: start.jobId,
+        status: start.status,
+        progress: { step: "queued", message: "Queued", completed: 0, total: selectedItems.length },
+        errors: [],
+        downloadAvailable: false,
+        downloadUrl: null
+      });
+    } catch (error) {
+      setBriefError((error as Error).message);
+    } finally {
+      setBriefStarting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!briefStatus?.jobId || briefStatus.status === "completed" || briefStatus.status === "failed") return;
+    const timer = window.setInterval(async () => {
+      try {
+        setBriefStatus(await loadSummaryStatus(briefStatus.jobId));
+      } catch (error) {
+        setBriefError((error as Error).message);
+      }
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [briefStatus?.jobId, briefStatus?.status]);
+
   return (
     <main className="crt-shell">
       <div className="scanlines" aria-hidden="true" />
@@ -183,6 +237,33 @@ export default function App({ initialData }: AppProps) {
           <button className="icon-button" type="button" onClick={refresh} aria-label="Refresh monitor data">
             <RefreshCw size={18} aria-hidden="true" />
           </button>
+        </section>
+
+        <section className="brief-panel panel" aria-label="AI findings brief">
+          <div className="panel-title">
+            <FileText size={16} aria-hidden="true" />
+            AI FINDINGS BRIEF
+          </div>
+          <div className="brief-actions">
+            <span>
+              Selected {selectedItems.length}/{MAX_ARTICLES_PER_BRIEF}
+            </span>
+            {selectedOverLimit ? <strong>Select no more than {MAX_ARTICLES_PER_BRIEF} articles.</strong> : null}
+            <button
+              type="button"
+              onClick={generateBrief}
+              disabled={selectedItems.length === 0 || selectedOverLimit || briefStarting}
+            >
+              {briefStarting ? "Queueing..." : "Generate PDF brief"}
+            </button>
+            {selectedItems.length ? (
+              <button type="button" onClick={() => setSelectedIds(new Set())}>
+                Clear selection
+              </button>
+            ) : null}
+          </div>
+          {briefError ? <p className="brief-error">{briefError}</p> : null}
+          {briefStatus ? <BriefJobPanel status={briefStatus} /> : null}
         </section>
 
         <section className="filter-panel panel" aria-label="Filters">
@@ -287,7 +368,12 @@ export default function App({ initialData }: AppProps) {
           ) : null}
 
           {visibleItems.map((item) => (
-            <PublicationCard key={`${item.id}-${item.publication_date}`} item={item} />
+            <PublicationCard
+              key={`${item.id}-${item.publication_date}`}
+              item={item}
+              selected={selectedIds.has(itemKey(item))}
+              onToggleSelected={() => toggleSelected(item)}
+            />
           ))}
 
           {visibleItems.length < filteredItems.length ? (
@@ -387,7 +473,47 @@ function SelectField({ label, value, onChange, options, labels = {}, allLabel, a
   );
 }
 
-function PublicationCard({ item }: { item: ResearchItem }) {
+function BriefJobPanel({ status }: { status: BriefJobStatus }) {
+  const source = status.sourceStatusSummary;
+  const stepLabels: Record<BriefJobStatus["progress"]["step"], string> = {
+    queued: "Queued",
+    checking_open_access: "Checking open access",
+    retrieving_fulltext: "Retrieving full text",
+    extracting_sections: "Extracting Methods/Findings/Conclusions",
+    summarising: "Summarising",
+    generating_pdf: "Generating PDF",
+    completed: "Ready",
+    failed: "Failed"
+  };
+  return (
+    <div className="brief-status" role="status" aria-live="polite">
+      <strong>{stepLabels[status.progress.step]}</strong>
+      <span>{status.progress.message}</span>
+      {source ? (
+        <span>
+          OA full text: {source.oaFullTextUsed}; abstract only: {source.abstractOnly}; extraction failed:{" "}
+          {source.fulltextFoundButExtractionFailed}; no DOI: {source.noDoi}
+        </span>
+      ) : null}
+      {status.errors.length ? <span className="brief-error">{status.errors.join(" ")}</span> : null}
+      {status.downloadAvailable && status.downloadUrl ? (
+        <a className="download-brief" href={status.downloadUrl}>
+          Download PDF
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+function PublicationCard({
+  item,
+  selected,
+  onToggleSelected
+}: {
+  item: ResearchItem;
+  selected: boolean;
+  onToggleSelected: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const abstract = item.abstract || "No abstract available from OpenAlex.";
@@ -401,6 +527,10 @@ function PublicationCard({ item }: { item: ResearchItem }) {
 
   return (
     <article className="publication-card panel">
+      <label className="select-article">
+        <input type="checkbox" checked={selected} onChange={onToggleSelected} />
+        <span>Select for PDF brief</span>
+      </label>
       <div className="publication-meta">
         <span>{item.publication_date || item.publication_year || "date unknown"}</span>
         <span>{item.journal_name}</span>

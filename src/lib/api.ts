@@ -1,4 +1,4 @@
-import type { LatestPayload } from "../types";
+import type { BriefJobStatus, LatestPayload, ResearchItem } from "../types";
 
 const fallbackStatus = {
   lastUpdated: null,
@@ -54,4 +54,30 @@ export async function loadJournalData(
 ): Promise<LatestPayload> {
   const params = new URLSearchParams({ journal, days: String(days) });
   return normalizePayload(await fetchJson(fetchImpl, `/api/journal-latest?${params}`, signal));
+}
+
+export async function startSummaryJob(items: ResearchItem[], fetchImpl: typeof fetch = fetch) {
+  const response = await fetchImpl("/api/start-summary-job", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      articles: items.map((item) => ({
+        id: item.id,
+        title: item.title,
+        authors: item.authors,
+        publicationDate: item.publication_date,
+        year: item.publication_year,
+        journal: item.journal_name,
+        doi: item.doi,
+        abstract: item.abstract,
+        url: item.url || item.openalex_id
+      }))
+    })
+  });
+  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || `${response.status} ${response.statusText}`);
+  return (await response.json()) as { jobId: string; status: "queued" };
+}
+
+export async function loadSummaryStatus(jobId: string, fetchImpl: typeof fetch = fetch): Promise<BriefJobStatus> {
+  return fetchJson(fetchImpl, `/api/get-summary-status?jobId=${encodeURIComponent(jobId)}`) as Promise<BriefJobStatus>;
 }
