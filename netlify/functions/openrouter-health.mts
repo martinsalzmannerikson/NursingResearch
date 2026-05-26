@@ -35,7 +35,7 @@ export default async (request: Request) => {
       { role: "user", content: "Return exactly OK." }
     ],
     temperature: 0,
-    max_tokens: 8
+    max_tokens: 16
   };
 
   let statusCode: number | null = null;
