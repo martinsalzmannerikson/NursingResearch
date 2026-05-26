@@ -447,11 +447,6 @@ function PublicationCard({ item }: { item: ResearchItem }) {
       <p className="abstract">{abstractPreview}</p>
       {!cachedAbstract && fallbackStatus === "found" ? <p className="abstract-source">Abstract fetched from DOI/full text metadata.</p> : null}
       <div className="card-actions">
-        {item.doi ? (
-          <a href={item.doi} target="_blank" rel="noreferrer">
-            DOI <ExternalLink size={14} aria-hidden="true" />
-          </a>
-        ) : null}
         {item.oa_url ? (
           <a href={item.oa_url} target="_blank" rel="noreferrer">
             Full text <ExternalLink size={14} aria-hidden="true" />
@@ -459,7 +454,7 @@ function PublicationCard({ item }: { item: ResearchItem }) {
         ) : null}
         <button type="button" onClick={copyCitation} aria-label={`Copy citation for ${item.title}`}>
           <Clipboard size={14} aria-hidden="true" />
-          {copied ? "Copied" : "APA-ish"}
+          {copied ? "Copied" : "APA 7th ed."}
         </button>
         {abstract.length >= 360 ? (
           <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>

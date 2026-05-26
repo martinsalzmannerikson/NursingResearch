@@ -10,6 +10,8 @@ describe("Nursing Research Monitor smoke tests", () => {
     expect(screen.getByText(/Salzmann-Erikson, 2026/i)).toBeInTheDocument();
     expect(screen.getByText(/Digital nursing education improves clinical reasoning/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Journal of Advanced Nursing/i).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: /^DOI/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/APA 7th ed\./i).length).toBeGreaterThan(0);
   });
 
   it("renders an empty state when there are no articles", async () => {

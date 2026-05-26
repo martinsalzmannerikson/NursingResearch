@@ -5,6 +5,7 @@ import { getEnv, jsonResponse } from "./_shared/env.js";
 
 const STORE_NAME = "article-abstract-cache";
 const CROSSREF_BASE_URL = "https://api.crossref.org";
+const EUROPE_PMC_BASE_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest";
 const MAX_HTML_BYTES = 600_000;
 const FETCH_TIMEOUT_MS = 12_000;
 
@@ -35,7 +36,7 @@ function safeUrl(value = "") {
 }
 
 function cacheKey(identifier: string) {
-  return `abstracts/${createHash("sha256").update(identifier).digest("hex")}.json`;
+  return `abstracts/v2/${createHash("sha256").update(identifier).digest("hex")}.json`;
 }
 
 function decodeEntities(value = "") {
@@ -220,6 +221,42 @@ async function fetchCrossrefAbstract(doi: string) {
   }
 }
 
+async function fetchEuropePmcAbstract(doi: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const url = new URL("/search", EUROPE_PMC_BASE_URL);
+    url.searchParams.set("query", `DOI:"${doi}"`);
+    url.searchParams.set("format", "json");
+    url.searchParams.set("resultType", "core");
+    url.searchParams.set("pageSize", "1");
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "NursingResearchMonitor/1.0 DOI metadata fetcher"
+      }
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const payload = (await response.json()) as {
+      resultList?: {
+        result?: Array<{
+          abstractText?: string;
+          fullTextUrlList?: { fullTextUrl?: Array<{ url?: string }> };
+          doi?: string;
+        }>;
+      };
+    };
+    const record = payload.resultList?.result?.[0];
+    const abstract = plausibleAbstract(record?.abstractText ?? "");
+    if (!abstract) throw new Error("no Europe PMC abstract metadata found");
+    const sourceUrl = record?.fullTextUrlList?.fullTextUrl?.find((entry) => safeUrl(entry.url))?.url || `https://doi.org/${doi}`;
+    return { abstract, sourceUrl };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async (request: Request) => {
   if (request.method !== "GET") return jsonResponse({ error: "Method not allowed" }, { status: 405 });
 
@@ -257,6 +294,20 @@ export default async (request: Request) => {
       return jsonResponse(result);
     } catch (error) {
       errors.push(`doi_metadata: ${(error as Error).message}`);
+    }
+
+    try {
+      const europePmc = await fetchEuropePmcAbstract(doi);
+      const result: AbstractResult = {
+        abstract: europePmc.abstract,
+        source: "doi_metadata",
+        sourceUrl: europePmc.sourceUrl,
+        cached: false
+      };
+      await store.setJSON(key, result);
+      return jsonResponse(result);
+    } catch (error) {
+      errors.push(`doi_metadata_europepmc: ${(error as Error).message}`);
     }
   }
 
