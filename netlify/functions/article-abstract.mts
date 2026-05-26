@@ -36,7 +36,7 @@ function safeUrl(value = "") {
 }
 
 function cacheKey(identifier: string) {
-  return `abstracts/v2/${createHash("sha256").update(identifier).digest("hex")}.json`;
+  return `abstracts/v3/${createHash("sha256").update(identifier).digest("hex")}.json`;
 }
 
 function decodeEntities(value = "") {
@@ -225,7 +225,7 @@ async function fetchEuropePmcAbstract(doi: string) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const url = new URL("/search", EUROPE_PMC_BASE_URL);
+    const url = new URL(`${EUROPE_PMC_BASE_URL}/search`);
     url.searchParams.set("query", `DOI:"${doi}"`);
     url.searchParams.set("format", "json");
     url.searchParams.set("resultType", "core");
