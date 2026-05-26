@@ -207,7 +207,8 @@ export function createOpenRouterRequestBody(articles: BriefArticleInput[], extra
   const body: Record<string, unknown> = {
     messages,
     temperature: 0.2,
-    max_tokens: 1800
+    max_completion_tokens: 1800,
+    reasoning: { effort: "minimal", exclude: true }
   };
   if (fallbackModels.length) body.models = [model, ...fallbackModels];
   else body.model = model;
@@ -368,7 +369,9 @@ async function callOpenRouter(
     primaryModel,
     fallbackModels: Array.isArray(body.models) ? (body.models as string[]).slice(1) : [],
     strictJsonSchemaDisabled: true,
-    providerRestrictionsDisabled: true
+    providerRestrictionsDisabled: true,
+    maxCompletionTokens: body.max_completion_tokens,
+    reasoningEffort: (body.reasoning as { effort?: string } | undefined)?.effort ?? null
   });
 
   const controller = new AbortController();
@@ -456,11 +459,13 @@ export async function summarizeWithOpenRouter(
     const data = await callOpenRouter(body, apiKey, siteUrl, appTitle, timeoutMs, model);
     const raw = extractOpenRouterContent(data.choices?.[0]?.message);
     const markdown = sanitizeMarkdown(raw);
+    const emptyContent = markdown.trim().length === 0;
     const debugSummary: BriefDebugSummary = {
       ...debugBase,
       modelUsed: data.model || model,
       ...data.diagnostics,
-      markdownSectionLengths: markdownSectionLengths(markdown)
+      markdownSectionLengths: markdownSectionLengths(markdown),
+      failurePoint: emptyContent ? "after_openrouter_empty_model_response" : undefined
     };
     const emptySections = REQUIRED_MARKDOWN_SECTIONS.filter((name) => (debugSummary.markdownSectionLengths?.[name] ?? 0) === 0);
     console.log("Markdown parse diagnostics:", {

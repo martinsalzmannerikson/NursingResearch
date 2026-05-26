@@ -35,7 +35,8 @@ export default async (request: Request) => {
       { role: "user", content: "Return exactly OK." }
     ],
     temperature: 0,
-    max_tokens: 64
+    max_completion_tokens: 128,
+    reasoning: { effort: "minimal", exclude: true }
   };
 
   let statusCode: number | null = null;
@@ -49,12 +50,13 @@ export default async (request: Request) => {
     statusCode = response.status;
     const raw = await response.text();
     if (response.ok) {
-      const parsed = JSON.parse(raw) as { choices?: Array<{ message?: unknown }>; model?: string };
+      const parsed = JSON.parse(raw) as { choices?: Array<{ message?: unknown; finish_reason?: string }>; model?: string };
       responseText = extractOpenRouterContent(parsed.choices?.[0]?.message);
       return jsonResponse({
         success: /^OK\.?$/i.test(responseText.trim()),
         modelUsed: parsed.model || model,
         statusCode,
+        finishReason: parsed.choices?.[0]?.finish_reason || null,
         responseContentLength: responseText.length,
         responseTextPreview: cleanBriefText(responseText, 120)
       });

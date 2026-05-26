@@ -176,6 +176,9 @@ describe("AI findings brief utilities", () => {
       expect(requestBody.models).toBeUndefined();
       expect(requestBody.provider).toBeUndefined();
       expect(requestBody.response_format).toBeUndefined();
+      expect(requestBody.max_tokens).toBeUndefined();
+      expect(requestBody.max_completion_tokens).toBe(1800);
+      expect(requestBody.reasoning).toEqual({ effort: "minimal", exclude: true });
     } finally {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
