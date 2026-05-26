@@ -30,6 +30,28 @@ export type OpenRouterBriefDiagnostics = {
   markdownSectionLengths: Record<string, number>;
 };
 
+export function extractOpenRouterContent(message: unknown) {
+  if (!message || typeof message !== "object") return "";
+  const content = (message as { content?: unknown; text?: unknown }).content ?? (message as { text?: unknown }).text;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (!part || typeof part !== "object") return "";
+        return String(
+          (part as { text?: unknown; content?: unknown; value?: unknown }).text ??
+            (part as { content?: unknown }).content ??
+            (part as { value?: unknown }).value ??
+            ""
+        );
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
 export class OpenRouterModelUnavailableError extends Error {
   friendlyMessage: string;
   details: string;
@@ -360,8 +382,8 @@ async function callOpenRouter(
     });
     const text = await response.text();
     if (!response.ok) throw new OpenRouterRequestError(response.status, text, primaryModel);
-    const parsed = JSON.parse(text) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; model?: string };
-    const content = parsed.choices?.[0]?.message?.content || "";
+    const parsed = JSON.parse(text) as { choices?: Array<{ message?: unknown; finish_reason?: string }>; model?: string };
+    const content = extractOpenRouterContent(parsed.choices?.[0]?.message);
     const finishReason = parsed.choices?.[0]?.finish_reason || null;
     const responseDiagnostics = {
       openRouterStatus: response.status,
@@ -432,7 +454,7 @@ export async function summarizeWithOpenRouter(
   try {
     await onProgress?.(`Sending compact evidence package to ${model}.`);
     const data = await callOpenRouter(body, apiKey, siteUrl, appTitle, timeoutMs, model);
-    const raw = data.choices?.[0]?.message?.content || "";
+    const raw = extractOpenRouterContent(data.choices?.[0]?.message);
     const markdown = sanitizeMarkdown(raw);
     const debugSummary: BriefDebugSummary = {
       ...debugBase,

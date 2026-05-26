@@ -1,7 +1,7 @@
 import type { Config } from "@netlify/functions";
 import { getEnv, jsonResponse } from "./_shared/env.js";
 import { cleanBriefText } from "./_shared/brief-utils.js";
-import { configuredOpenRouterModels } from "./_shared/brief-openrouter.js";
+import { configuredOpenRouterModels, extractOpenRouterContent } from "./_shared/brief-openrouter.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -35,7 +35,7 @@ export default async (request: Request) => {
       { role: "user", content: "Return exactly OK." }
     ],
     temperature: 0,
-    max_tokens: 16
+    max_tokens: 64
   };
 
   let statusCode: number | null = null;
@@ -49,8 +49,8 @@ export default async (request: Request) => {
     statusCode = response.status;
     const raw = await response.text();
     if (response.ok) {
-      const parsed = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }>; model?: string };
-      responseText = parsed.choices?.[0]?.message?.content || "";
+      const parsed = JSON.parse(raw) as { choices?: Array<{ message?: unknown }>; model?: string };
+      responseText = extractOpenRouterContent(parsed.choices?.[0]?.message);
       return jsonResponse({
         success: /^OK\.?$/i.test(responseText.trim()),
         modelUsed: parsed.model || model,
