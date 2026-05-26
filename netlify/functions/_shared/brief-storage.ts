@@ -1,7 +1,7 @@
 import { getStore } from "@netlify/blobs";
 import { BRIEF_JOB_STORE, BRIEF_PDF_STORE, type ArticleExtraction, type BriefArticleInput, type SourceCoverage } from "./brief-utils.js";
 
-export type BriefJobStatus = "queued" | "running" | "completed" | "failed";
+export type BriefJobStatus = "queued" | "running" | "completed" | "completed_with_fallback" | "failed";
 
 export type BriefProgressStep =
   | "queued"
@@ -31,6 +31,7 @@ export type BriefJob = {
   summary?: unknown;
   rawModelResponse?: string;
   modelUsed?: string;
+  fallbackReason?: string;
   pdfKey?: string;
   resultKey?: string;
 };

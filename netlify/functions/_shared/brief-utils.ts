@@ -172,7 +172,7 @@ export function sourceCoverage(items: Array<Pick<ArticleExtraction, "sourceStatu
     oaFullTextUsed: items.filter((item) => item.sourceStatus === "oa_fulltext_sections_used").length,
     abstractOnly: items.filter((item) => item.sourceStatus === "abstract_only").length,
     fulltextFoundButExtractionFailed: items.filter((item) => item.sourceStatus === "fulltext_found_but_extraction_failed").length,
-    noDoi: items.filter((item) => item.sourceStatus === "no_doi" || !("doi" in item) || !(item as Partial<ArticleExtraction>).doi).length,
+    noDoi: items.filter((item) => item.sourceStatus === "no_doi").length,
     insufficientData: items.filter((item) => item.sourceStatus === "insufficient_data").length
   };
 }

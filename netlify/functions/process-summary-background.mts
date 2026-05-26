@@ -36,7 +36,9 @@ async function processJob(jobId: string) {
       jobId,
       articles: job.articles,
       extractions,
-      summary: summary.parsed
+      summary: summary.parsed,
+      synthesisMode: summary.fallback ? "fallback" : "model",
+      fallbackReason: summary.fallbackReason
     });
     const pdfKey = `${jobId}.pdf`;
     await pdfStore().set(pdfKey, pdf, {
@@ -48,10 +50,12 @@ async function processJob(jobId: string) {
 
     const completed = await getJob(jobId);
     if (!completed) throw new Error(`Job disappeared before completion: ${jobId}`);
-    completed.status = "completed";
+    completed.status = summary.fallback ? "completed_with_fallback" : "completed";
     completed.progress = {
       step: "completed",
-      message: "PDF brief is ready.",
+      message: summary.fallback
+        ? "PDF generated with fallback notes. The selected language model was not available."
+        : "PDF brief is ready.",
       completed: job.articles.length,
       total: job.articles.length
     };
@@ -60,6 +64,10 @@ async function processJob(jobId: string) {
     completed.summary = summary.parsed;
     completed.rawModelResponse = summary.raw;
     completed.modelUsed = summary.model;
+    completed.fallbackReason = summary.fallbackReason;
+    if (summary.fallback && summary.errorSummary?.length) {
+      completed.errors = [...new Set([...completed.errors, ...summary.errorSummary])];
+    }
     completed.pdfKey = pdfKey;
     await saveJob(completed);
   } catch (error) {

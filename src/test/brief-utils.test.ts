@@ -11,6 +11,17 @@ import { chooseOpenAccessSource } from "../../netlify/functions/_shared/brief-op
 import { summarizeWithOpenRouter } from "../../netlify/functions/_shared/brief-openrouter";
 import { generateFindingsBriefPdf } from "../../netlify/functions/_shared/brief-pdf";
 
+function decodePdfText(pdf: ArrayBuffer) {
+  const raw = new TextDecoder("latin1").decode(pdf);
+  const decoder = new TextDecoder("windows-1252");
+  return [...raw.matchAll(/<([0-9a-f]+)>/gi)]
+    .map((match) => {
+      const bytes = new Uint8Array((match[1].match(/../g) || []).map((hex) => Number.parseInt(hex, 16)));
+      return decoder.decode(bytes);
+    })
+    .join(" ");
+}
+
 describe("AI findings brief utilities", () => {
   it("normalizes DOI variants", () => {
     expect(normalizeDoi(" https://doi.org/10.1111/SCS.70265 ")).toBe("10.1111/scs.70265");
@@ -82,7 +93,8 @@ describe("AI findings brief utilities", () => {
       delete process.env.OPENROUTER_MODEL;
       const result = await summarizeWithOpenRouter([], []);
       expect(result.model).toBe("deterministic-fallback");
-      expect(result.parsed.executiveSummary).toMatch(/OpenRouter was unavailable/i);
+      expect(result.parsed.executiveSummary).toMatch(/fallback extraction notes/i);
+      expect(result.errorSummary?.[0]).toMatch(/OPENROUTER_MODEL/i);
     } finally {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
@@ -111,75 +123,57 @@ describe("AI findings brief utilities", () => {
     }
   });
 
-  it("falls back to another free model when the configured endpoint is blocked", async () => {
+  it("uses deterministic fallback with a friendly privacy-policy message when OpenRouter has no compatible endpoint", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
     try {
       process.env.OPENROUTER_API_KEY = "test-key";
       process.env.OPENROUTER_MODEL = "blocked/model:free";
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 404,
-          text: async () =>
-            JSON.stringify({
-              error: { message: "No endpoints available matching your guardrail restrictions and data policy." }
-            })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          text: async () =>
-            JSON.stringify({
-              choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
-            })
-        });
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        text: async () =>
+          JSON.stringify({
+            error: { message: "No endpoints available matching your guardrail restrictions and data policy." }
+          })
+      });
       vi.stubGlobal("fetch", fetchMock);
       const result = await summarizeWithOpenRouter([], []);
-      expect(result.model).toBe("openai/gpt-oss-20b:free");
-      expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).model).toBe("openai/gpt-oss-20b:free");
+      expect(result.model).toBe("deterministic-fallback");
+      expect(result.fallback).toBe(true);
+      expect(result.errorSummary?.[0]).toMatch(/privacy\/data policy/i);
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).model).toBe("blocked/model:free");
     } finally {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
     }
   });
 
-  it("continues to the next free model when a provider is rate limited", async () => {
+  it("uses deterministic fallback with a friendly rate-limit message when OpenRouter is rate limited", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
     try {
       process.env.OPENROUTER_API_KEY = "test-key";
       process.env.OPENROUTER_MODEL = "openai/gpt-oss-20b:free";
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 429,
-          text: async () =>
-            JSON.stringify({
-              error: { message: "Provider returned error: temporarily rate-limited upstream." }
-            })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          text: async () =>
-            JSON.stringify({
-              choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
-            })
-        });
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        text: async () =>
+          JSON.stringify({
+            error: { message: "Provider returned error: temporarily rate-limited upstream." }
+          })
+      });
       vi.stubGlobal("fetch", fetchMock);
       const result = await summarizeWithOpenRouter([], []);
-      expect(result.model).toBe("qwen/qwen3-next-80b-a3b-instruct:free");
-      expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).model).toBe(
-        "qwen/qwen3-next-80b-a3b-instruct:free"
-      );
+      expect(result.model).toBe("deterministic-fallback");
+      expect(result.errorSummary?.[0]).toMatch(/rate limit/i);
     } finally {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
     }
   });
 
-  it("continues to the next free model when an OpenRouter request times out", async () => {
+  it("uses deterministic fallback when an OpenRouter request times out", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
     const previousTimeout = process.env.OPENROUTER_REQUEST_TIMEOUT_MS;
@@ -197,10 +191,11 @@ describe("AI findings brief utilities", () => {
             JSON.stringify({
               choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
             })
-        });
+      });
       vi.stubGlobal("fetch", fetchMock);
       const result = await summarizeWithOpenRouter([], []);
-      expect(result.model).toBe("qwen/qwen3-next-80b-a3b-instruct:free");
+      expect(result.model).toBe("deterministic-fallback");
+      expect(result.errorSummary?.[0]).toMatch(/timed out/i);
     } finally {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
@@ -208,38 +203,30 @@ describe("AI findings brief utilities", () => {
     }
   });
 
-  it("continues to the next free model when a model returns invalid JSON", async () => {
+  it("uses deterministic fallback when a model returns invalid JSON", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
     try {
       process.env.OPENROUTER_API_KEY = "test-key";
       process.env.OPENROUTER_MODEL = "openai/gpt-oss-20b:free";
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          text: async () =>
-            JSON.stringify({
-              choices: [{ message: { content: "{\"executiveSummary\":\"OK\",\"keyFindings\":[\"missing close\"" } }]
-            })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          text: async () =>
-            JSON.stringify({
-              choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
-            })
-        });
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            choices: [{ message: { content: "{\"executiveSummary\":\"OK\",\"keyFindings\":[\"missing close\"" } }]
+          })
+      });
       vi.stubGlobal("fetch", fetchMock);
       const result = await summarizeWithOpenRouter([], []);
-      expect(result.model).toBe("qwen/qwen3-next-80b-a3b-instruct:free");
+      expect(result.model).toBe("deterministic-fallback");
+      expect(result.errorSummary?.[0]).toMatch(/valid JSON/i);
     } finally {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
     }
   });
 
-  it("generates a deterministic fallback brief when every free model is unavailable", async () => {
+  it("generates fallback notes from supplied article text when OpenRouter is unavailable", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
     try {
@@ -284,7 +271,7 @@ describe("AI findings brief utilities", () => {
     }
   });
 
-  it("generates a PDF document", () => {
+  it("generates a light, readable PDF document", () => {
     const extraction = {
       doi: "10.1/test",
       checkedAt: "2026-05-24T00:00:00Z",
@@ -299,12 +286,12 @@ describe("AI findings brief utilities", () => {
       abstract: "Brief abstract.",
       extractionWarnings: [],
       confidence: "medium",
-      title: "Test study",
+      title: "Säljö’s nursing study",
       isRetracted: false
     } as ArticleExtraction;
     const pdf = generateFindingsBriefPdf({
       jobId: "job-test",
-      articles: [{ title: "Test study", authors: ["A Nurse"], year: 2026, journal: "Journal", doi: "10.1/test" }],
+      articles: [{ title: "Säljö’s nursing study", authors: ["A Nurse"], year: 2026, journal: "Journal", doi: "10.1/test" }],
       extractions: [extraction],
       summary: {
         executiveSummary: "A cautious summary.",
@@ -313,11 +300,19 @@ describe("AI findings brief utilities", () => {
         implicationsForNursingResearch: ["More work is needed."],
         limitationsOfEvidenceBase: ["Abstract only."],
         articleNotes: []
-      }
+      },
+      synthesisMode: "fallback",
+      fallbackReason: "OpenRouter rate limit: the selected model/provider is temporarily rate-limited."
     });
     const pdfText = new TextDecoder().decode(pdf);
+    const readableText = decodePdfText(pdf);
     expect(pdfText.slice(0, 8)).toMatch(/^%PDF-1\./);
-    expect(pdfText).toContain("/Count 4");
+    expect(pdfText).toContain("0.985 0.982 0.965 rg 0 0 612 792 re f");
+    expect(pdfText).not.toContain("0.008 0.016 0.012 rg 0 0 612 792 re f");
+    expect(readableText).toContain("Nursing Research Monitor");
+    expect(readableText).toContain("Fallback Evidence Notes");
+    expect(readableText).toContain("Article-level source log");
+    expect(readableText).toContain("Säljö's nursing study");
     expect(pdf.byteLength).toBeGreaterThan(1000);
   });
 });

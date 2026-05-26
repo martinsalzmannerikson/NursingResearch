@@ -3,17 +3,6 @@ import { capText, parseOpenRouterJson, type ArticleExtraction, type BriefArticle
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_OPENROUTER_TIMEOUT_MS = 20_000;
-const DEFAULT_OPENROUTER_MAX_MODEL_ATTEMPTS = 4;
-const FREE_MODEL_FALLBACKS = [
-  "openai/gpt-oss-20b:free",
-  "qwen/qwen3-next-80b-a3b-instruct:free",
-  "z-ai/glm-4.5-air:free",
-  "nvidia/nemotron-3-nano-30b-a3b:free",
-  "minimax/minimax-m2.5:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "openai/gpt-oss-120b:free",
-  "deepseek/deepseek-v4-flash:free"
-];
 
 type SummaryJson = {
   executiveSummary: string;
@@ -31,6 +20,28 @@ type SummaryJson = {
   }>;
   sourceStatusSummary: string[];
 };
+
+type SummaryResult = {
+  parsed: SummaryJson;
+  raw: string;
+  model: string;
+  fallback: boolean;
+  fallbackReason?: string;
+  errorSummary?: string[];
+};
+
+class OpenRouterRequestError extends Error {
+  status: number;
+  body: string;
+  model: string;
+
+  constructor(status: number, body: string, model: string) {
+    super(`OpenRouter ${status}: ${body}`);
+    this.status = status;
+    this.body = body;
+    this.model = model;
+  }
+}
 
 function articleEvidence(article: BriefArticleInput, extraction: ArticleExtraction) {
   return {
@@ -89,11 +100,41 @@ function methodText(extraction: ArticleExtraction) {
   return "Method details were not available.";
 }
 
+function friendlyOpenRouterMessage(error: unknown) {
+  if (error instanceof OpenRouterRequestError) {
+    if (error.status === 429) {
+      return "OpenRouter rate limit: the selected model/provider is temporarily rate-limited. Try again later or choose a model/provider with available capacity.";
+    }
+    if (error.status === 404 && /privacy|data policy|no endpoints?/i.test(error.body)) {
+      return "OpenRouter could not find an endpoint compatible with the current privacy/data policy settings. Check OpenRouter privacy settings or choose another model/provider.";
+    }
+    if (error.status === 401 || error.status === 403) {
+      return "OpenRouter rejected the request. Check the server-side API key and model/provider access.";
+    }
+    return `OpenRouter returned HTTP ${error.status}. A fallback brief was generated.`;
+  }
+  const message = (error as Error).message || "Unknown OpenRouter error.";
+  if (/timed out|timeout|abort/i.test(message)) {
+    return "OpenRouter timed out before returning a usable synthesis. A fallback brief was generated.";
+  }
+  if (/json|parse/i.test(message)) {
+    return "OpenRouter returned a response that was not valid JSON. A fallback brief was generated.";
+  }
+  if (/OPENROUTER_MODEL/i.test(message)) {
+    return "OPENROUTER_MODEL is not set. A fallback brief was generated.";
+  }
+  if (/OPENROUTER_API_KEY/i.test(message)) {
+    return "OPENROUTER_API_KEY is not set. A fallback brief was generated.";
+  }
+  return "OpenRouter did not return a usable synthesis. A fallback brief was generated.";
+}
+
 function fallbackSummary(
   articles: BriefArticleInput[],
   extractions: ArticleExtraction[],
-  reasons: string[]
-): { parsed: SummaryJson; raw: string; model: string } {
+  friendlyReasons: string[]
+): SummaryResult {
+  const reasons = [...new Set(friendlyReasons)].filter(Boolean);
   const articleNotes = articles.map((article, index) => {
     const extraction = extractions[index];
     return {
@@ -108,10 +149,10 @@ function fallbackSummary(
     };
   });
   const fullTextCount = extractions.filter((item) => item.sourceStatus === "oa_fulltext_sections_used").length;
-  const abstractFallbackCount = extractions.filter((item) => item.sourceStatus !== "oa_fulltext_sections_used").length;
+  const fallbackCount = extractions.filter((item) => item.sourceStatus !== "oa_fulltext_sections_used").length;
   const parsed: SummaryJson = {
     executiveSummary:
-      "OpenRouter was unavailable during this job, so this brief uses a conservative deterministic fallback. It summarizes only the supplied article sections or abstracts and should be read as a source-status-aware findings aid rather than a model-generated synthesis.",
+      "This brief was generated using fallback extraction notes because the selected OpenRouter model did not return a usable synthesis. It summarizes only the supplied article sections or abstracts and should be read as a source-status-aware findings aid, not as a full AI-generated synthesis.",
     keyFindings: articleNotes.map((note, index) => `${index + 1}. ${note.title}: ${capText(note.findingsUsed, 360)}`),
     methodologicalProfile: articleNotes.map((note, index) => `${index + 1}. ${note.title}: ${note.designMethods}`),
     implicationsForNursingResearch: [
@@ -119,20 +160,23 @@ function fallbackSummary(
       "Where only abstracts or failed full-text extraction are available, claims should remain cautious and non-causal unless the abstract itself supports stronger wording."
     ],
     limitationsOfEvidenceBase: [
-      `OpenRouter did not provide a usable response. Fallback reason count: ${reasons.length}.`,
-      `${fullTextCount} record(s) used reliable OA full-text sections; ${abstractFallbackCount} record(s) used abstract or extraction-failure fallback text.`,
-      "The fallback does not infer cross-study themes beyond the supplied text and source-status metadata."
+      "The selected OpenRouter model did not return a usable synthesis, so cross-study interpretation is intentionally limited.",
+      `${fullTextCount} record(s) used reliable OA full-text sections; ${fallbackCount} record(s) used abstract or extraction-failure fallback text.`,
+      "Provider error details are kept out of this PDF; the user-facing job status contains a concise explanation."
     ],
     articleNotes,
     sourceStatusSummary: [
-      "Deterministic fallback used because OpenRouter free endpoints were unavailable, blocked, rate-limited, timed out, or returned invalid JSON.",
-      ...reasons.slice(0, 3).map((reason) => capText(reason, 260))
+      "Fallback extraction notes were used because the selected OpenRouter model was unavailable or did not return usable JSON.",
+      ...reasons.slice(0, 2)
     ]
   };
   return {
     parsed,
     raw: JSON.stringify({ fallback: true, reasons, parsed }),
-    model: "deterministic-fallback"
+    model: "deterministic-fallback",
+    fallback: true,
+    fallbackReason: reasons[0] || "The selected OpenRouter model did not return a usable synthesis.",
+    errorSummary: reasons
   };
 }
 
@@ -202,7 +246,7 @@ async function callOpenRouter(
       signal: controller.signal
     });
     const text = await response.text();
-    if (!response.ok) throw new Error(`OpenRouter ${response.status}: ${text}`);
+    if (!response.ok) throw new OpenRouterRequestError(response.status, text, String(body.model || ""));
     return JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
   } catch (error) {
     if ((error as Error).name === "AbortError") {
@@ -214,33 +258,15 @@ async function callOpenRouter(
   }
 }
 
-function modelCandidates(primaryModel: string) {
-  return [
-    ...new Set(
-      [primaryModel, ...FREE_MODEL_FALLBACKS]
-        .map((model) => model.trim())
-        .filter((candidate) => candidate && !/^google\/gemma-4-\d+b.*(?::free)?$/i.test(candidate))
-    )
-  ];
-}
-
-function isRetryableModelError(error: unknown) {
-  return /no endpoints?|guardrail|data policy|privacy|model not found|provider returned error|temporarily|rate.?limit|upstream|timed out|timeout|abort|404|429|503/i.test(
-    (error as Error).message
-  );
-}
-
 export async function summarizeWithOpenRouter(
   articles: BriefArticleInput[],
   extractions: ArticleExtraction[],
   onProgress?: (message: string) => Promise<void> | void
-) {
+): Promise<SummaryResult> {
   const apiKey = getEnv("OPENROUTER_API_KEY");
   const model = process.env.OPENROUTER_MODEL?.trim();
   if (!apiKey || !model) {
-    const reason = !apiKey
-      ? "OPENROUTER_API_KEY is not set; deterministic fallback synthesis was used."
-      : "OPENROUTER_MODEL is not set; deterministic fallback synthesis was used.";
+    const reason = friendlyOpenRouterMessage(new Error(!apiKey ? "OPENROUTER_API_KEY is not set." : "OPENROUTER_MODEL is not set."));
     await onProgress?.(reason);
     return fallbackSummary(articles, extractions, [reason]);
   }
@@ -248,74 +274,47 @@ export async function summarizeWithOpenRouter(
   const siteUrl = getEnv("OPENROUTER_SITE_URL");
   const appTitle = getEnv("OPENROUTER_APP_TITLE", "Nursing Research Monitor");
   const timeoutMs = Number(getEnv("OPENROUTER_REQUEST_TIMEOUT_MS", String(DEFAULT_OPENROUTER_TIMEOUT_MS))) || DEFAULT_OPENROUTER_TIMEOUT_MS;
-  const maxModelAttempts =
-    Number(getEnv("OPENROUTER_MAX_MODEL_ATTEMPTS", String(DEFAULT_OPENROUTER_MAX_MODEL_ATTEMPTS))) ||
-    DEFAULT_OPENROUTER_MAX_MODEL_ATTEMPTS;
-
-  let parsed;
-  let raw = "";
-  let usedModel = model;
-  const modelErrors: string[] = [];
-
-  for (const candidateModel of modelCandidates(model).slice(0, Math.max(1, maxModelAttempts))) {
-    const baseBody = {
-      model: candidateModel,
-      messages: buildMessages(articles, extractions),
-      temperature: 0.2,
-      max_tokens: 3000,
-      provider: {
-        data_collection: "allow",
-        allow_fallbacks: true
-      }
-    };
-    try {
-      usedModel = candidateModel;
-      await onProgress?.(`Trying OpenRouter model ${candidateModel}.`);
-      try {
-        const data = await callOpenRouter(
-          { ...baseBody, response_format: { type: "json_object" } },
-          apiKey,
-          siteUrl,
-          appTitle,
-          timeoutMs
-        );
-        raw = data.choices?.[0]?.message?.content || "";
-      } catch (error) {
-        if (!/response_format|json_object|schema|unsupported|400/i.test((error as Error).message)) throw error;
-        await onProgress?.(`Retrying ${candidateModel} without JSON response_format.`);
-        const data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle, timeoutMs);
-        raw = data.choices?.[0]?.message?.content || "";
-      }
-      if (!raw) throw new Error("OpenRouter returned an empty response.");
-      try {
-        parsed = parseOpenRouterJson(raw);
-      } catch (error) {
-        modelErrors.push(`${candidateModel}: OpenRouter response JSON parsing failed: ${(error as Error).message}`);
-        await onProgress?.(`OpenRouter model ${candidateModel} returned invalid JSON; trying the next free model.`);
-        raw = "";
-        continue;
-      }
-      break;
-    } catch (error) {
-      modelErrors.push(`${candidateModel}: ${(error as Error).message}`);
-      if (!isRetryableModelError(error)) throw error;
-      await onProgress?.(`OpenRouter model ${candidateModel} was unavailable; trying the next free model.`);
+  const baseBody = {
+    model,
+    messages: buildMessages(articles, extractions),
+    temperature: 0.2,
+    max_tokens: 3000,
+    provider: {
+      data_collection: "allow",
+      allow_fallbacks: true
     }
-  }
-
-  if (!parsed) {
-    const reason = `No OpenRouter free model endpoint was available within ${Math.max(
-      1,
-      maxModelAttempts
-    )} attempt(s). Tried: ${modelErrors.join(" | ")}`;
-    console.error(reason);
-    await onProgress?.("OpenRouter was unavailable; generating deterministic fallback brief.");
-    return fallbackSummary(articles, extractions, modelErrors);
-  }
-
-  return {
-    parsed,
-    raw,
-    model: usedModel
   };
+
+  try {
+    await onProgress?.(`Trying OpenRouter model ${model}.`);
+    let data;
+    try {
+      data = await callOpenRouter({ ...baseBody, response_format: { type: "json_object" } }, apiKey, siteUrl, appTitle, timeoutMs);
+    } catch (error) {
+      if (!/response_format|json_object|schema|unsupported|400/i.test((error as Error).message)) throw error;
+      await onProgress?.(`Retrying ${model} without JSON response_format.`);
+      data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle, timeoutMs);
+    }
+    const raw = data.choices?.[0]?.message?.content || "";
+    if (!raw) throw new Error("OpenRouter returned an empty response.");
+    try {
+      return {
+        parsed: parseOpenRouterJson(raw),
+        raw,
+        model,
+        fallback: false,
+        errorSummary: []
+      };
+    } catch (error) {
+      console.error("OpenRouter returned invalid JSON:", error, raw.slice(0, 1000));
+      const reason = friendlyOpenRouterMessage(new Error(`OpenRouter response JSON parsing failed: ${(error as Error).message}`));
+      await onProgress?.("OpenRouter returned invalid JSON; generating fallback evidence notes.");
+      return fallbackSummary(articles, extractions, [reason]);
+    }
+  } catch (error) {
+    console.error("OpenRouter synthesis failed:", error);
+    const reason = friendlyOpenRouterMessage(error);
+    await onProgress?.("OpenRouter was unavailable; generating fallback evidence notes.");
+    return fallbackSummary(articles, extractions, [reason]);
+  }
 }

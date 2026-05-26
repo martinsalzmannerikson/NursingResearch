@@ -186,7 +186,14 @@ export default function App({ initialData }: AppProps) {
   };
 
   useEffect(() => {
-    if (!briefStatus?.jobId || briefStatus.status === "completed" || briefStatus.status === "failed") return;
+    if (
+      !briefStatus?.jobId ||
+      briefStatus.status === "completed" ||
+      briefStatus.status === "completed_with_fallback" ||
+      briefStatus.status === "failed"
+    ) {
+      return;
+    }
     const timer = window.setInterval(async () => {
       try {
         setBriefStatus(await loadSummaryStatus(briefStatus.jobId));
@@ -199,7 +206,7 @@ export default function App({ initialData }: AppProps) {
 
   useEffect(() => {
     if (
-      briefStatus?.status !== "completed" ||
+      (briefStatus?.status !== "completed" && briefStatus?.status !== "completed_with_fallback") ||
       !briefStatus.downloadUrl ||
       downloadedBriefRef.current === briefStatus.jobId
     ) {
@@ -504,17 +511,25 @@ function BriefJobPanel({ status }: { status: BriefJobStatus }) {
     completed: "Ready",
     failed: "Failed"
   };
+  const currentStepLabel = status.status === "completed_with_fallback" ? "Ready with fallback" : stepLabels[status.progress.step];
   return (
     <div className="brief-status" role="status" aria-live="polite">
-      <strong>{stepLabels[status.progress.step]}</strong>
+      <strong>{currentStepLabel}</strong>
       <span>{status.progress.message}</span>
       {source ? (
         <span>
           OA full text: {source.oaFullTextUsed}; abstract only: {source.abstractOnly}; extraction failed:{" "}
-          {source.fulltextFoundButExtractionFailed}; no DOI: {source.noDoi}
+          {source.fulltextFoundButExtractionFailed}; no DOI: {source.noDoi}; insufficient data: {source.insufficientData}
         </span>
       ) : null}
-      {status.errors.length ? <span className="brief-error">{status.errors.join(" ")}</span> : null}
+      {status.status === "completed_with_fallback" ? (
+        <span className="brief-warning">PDF generated with fallback notes. The selected language model was not available.</span>
+      ) : null}
+      {status.errors.length ? (
+        <span className={status.status === "completed_with_fallback" ? "brief-warning" : "brief-error"}>
+          {status.errors.join(" ")}
+        </span>
+      ) : null}
       {status.modelUsed ? <span>Model: {status.modelUsed}</span> : null}
       {status.downloadAvailable && status.downloadUrl ? (
         <a className="download-brief" href={status.downloadUrl}>

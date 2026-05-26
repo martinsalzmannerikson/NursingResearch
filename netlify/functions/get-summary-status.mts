@@ -29,8 +29,12 @@ export default async (request: Request) => {
     })),
     errors: job.errors,
     modelUsed: job.modelUsed ?? null,
-    downloadAvailable: job.status === "completed" && Boolean(job.pdfKey),
-    downloadUrl: job.status === "completed" && job.pdfKey ? `/api/download-summary-pdf?jobId=${encodeURIComponent(jobId)}` : null
+    fallbackReason: job.fallbackReason ?? null,
+    downloadAvailable: (job.status === "completed" || job.status === "completed_with_fallback") && Boolean(job.pdfKey),
+    downloadUrl:
+      (job.status === "completed" || job.status === "completed_with_fallback") && job.pdfKey
+        ? `/api/download-summary-pdf?jobId=${encodeURIComponent(jobId)}`
+        : null
   });
 };
 

@@ -116,17 +116,16 @@ OPENALEX_MAX_PAGES_PER_CHUNK=10
 OPENALEX_RESOLVE_DELAY_MS=750
 MAX_ARTICLES_PER_BRIEF=6
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_MODEL=
 OPENROUTER_REQUEST_TIMEOUT_MS=20000
-OPENROUTER_MAX_MODEL_ATTEMPTS=4
 OPENROUTER_SITE_URL=
 OPENROUTER_APP_TITLE=Nursing Research Monitor
 ```
 
 `OPENALEX_API_KEY`, `OPENALEX_MAILTO`, and `OPENALEX_RESOLVE_DELAY_MS` are used by local/GitHub Actions source resolution. Netlify production does not run source resolution.
-`OPENROUTER_API_KEY` and `OPENROUTER_MODEL` are required for AI findings brief jobs. The model is read server-side only.
-`OPENROUTER_REQUEST_TIMEOUT_MS` controls the per-model timeout before the server tries the next free fallback model.
-If OpenRouter is unavailable after `OPENROUTER_MAX_MODEL_ATTEMPTS`, the app still generates a clearly marked deterministic fallback PDF from the available abstracts/sections.
+`OPENROUTER_API_KEY` and `OPENROUTER_MODEL` are used for AI findings brief jobs. The selected model is read server-side only.
+`OPENROUTER_REQUEST_TIMEOUT_MS` controls how long the server waits for the selected model before using fallback notes.
+If OpenRouter is unavailable, the app still generates a clearly marked deterministic fallback PDF from the available abstracts/sections.
 
 ## Netlify Deploy
 
@@ -166,9 +165,8 @@ MAX_RESULTS=5000
 OPENALEX_MAX_PAGES_PER_CHUNK=10
 MAX_ARTICLES_PER_BRIEF=6
 OPENROUTER_API_KEY
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_MODEL=your-provider/your-model
 OPENROUTER_REQUEST_TIMEOUT_MS=20000
-OPENROUTER_MAX_MODEL_ATTEMPTS=4
 OPENROUTER_SITE_URL=https://nursing-research-monitor.netlify.app
 OPENROUTER_APP_TITLE=Nursing Research Monitor
 ```
@@ -195,7 +193,7 @@ G. Confirm that the scheduled function updates once per day at 05:00 UTC.
 Users can select up to `MAX_ARTICLES_PER_BRIEF` articles and generate a PDF findings brief. The workflow is job based:
 
 - `POST /api/start-summary-job` validates selected article metadata, stores a queued job in Netlify Blobs, and invokes the background function.
-- `process-summary-background` checks DOI-first OpenAlex metadata, retrieves only legal OA locations reported by OpenAlex, extracts allowed Methods/Findings/Conclusions sections when reliable, calls OpenRouter with per-model timeout/fallback handling, and stores the generated PDF in Netlify Blobs. If all attempted OpenRouter endpoints are unavailable, it generates a source-status-aware deterministic fallback brief instead of failing the job.
+- `process-summary-background` checks DOI-first OpenAlex metadata, retrieves only legal OA locations reported by OpenAlex, extracts allowed Methods/Findings/Conclusions sections when reliable, calls the selected OpenRouter model with timeout handling, and stores the generated PDF in Netlify Blobs. If OpenRouter is unavailable, it generates a source-status-aware deterministic fallback brief instead of failing the job.
 - `GET /api/get-summary-status?jobId=...` returns job progress and source-status summaries without returning extracted article text.
 - `GET /api/download-summary-pdf?jobId=...` downloads the generated PDF.
 
@@ -214,7 +212,9 @@ Local testing for brief jobs should use Netlify Dev so Blobs and background func
 netlify dev
 ```
 
-Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in the Netlify Dev environment before generating a live brief. Optional: set `OPENROUTER_REQUEST_TIMEOUT_MS` and `OPENROUTER_MAX_MODEL_ATTEMPTS` to tune how quickly slow or blocked free models are skipped.
+Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in the Netlify Dev environment before generating a live model-based brief. Optional: set `OPENROUTER_REQUEST_TIMEOUT_MS` to tune how quickly a slow or blocked model is skipped in favor of fallback notes.
+
+PDF visual QA: generate a brief locally through Netlify Dev or production, open the downloaded PDF in a normal PDF viewer, and confirm it has a light background, dark readable body text, complete main headings, and stacked article source cards with no clipped text.
 
 ## Checks
 

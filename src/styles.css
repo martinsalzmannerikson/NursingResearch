@@ -224,6 +224,10 @@ h1 {
   color: var(--danger);
 }
 
+.brief-warning {
+  color: #ffd36a;
+}
+
 .brief-actions button,
 .download-brief {
   min-height: 38px;

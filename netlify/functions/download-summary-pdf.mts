@@ -8,7 +8,7 @@ export default async (request: Request) => {
   if (!jobId) return jsonResponse({ error: "jobId is required" }, { status: 400 });
 
   const job = await getJob(jobId);
-  if (!job || job.status !== "completed" || !job.pdfKey) {
+  if (!job || (job.status !== "completed" && job.status !== "completed_with_fallback") || !job.pdfKey) {
     return jsonResponse({ error: "PDF is not available for this job." }, { status: 404 });
   }
 
