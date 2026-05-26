@@ -74,13 +74,15 @@ describe("AI findings brief utilities", () => {
     });
   });
 
-  it("fails clearly when OPENROUTER_MODEL is missing", async () => {
+  it("uses deterministic fallback when OPENROUTER_MODEL is missing", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
     try {
       process.env.OPENROUTER_API_KEY = "test-key";
       delete process.env.OPENROUTER_MODEL;
-      await expect(summarizeWithOpenRouter([], [])).rejects.toThrow(/OPENROUTER_MODEL is not set/);
+      const result = await summarizeWithOpenRouter([], []);
+      expect(result.model).toBe("deterministic-fallback");
+      expect(result.parsed.executiveSummary).toMatch(/OpenRouter was unavailable/i);
     } finally {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
@@ -231,6 +233,51 @@ describe("AI findings brief utilities", () => {
       vi.stubGlobal("fetch", fetchMock);
       const result = await summarizeWithOpenRouter([], []);
       expect(result.model).toBe("qwen/qwen3-next-80b-a3b-instruct:free");
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
+    }
+  });
+
+  it("generates a deterministic fallback brief when every free model is unavailable", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      process.env.OPENROUTER_MODEL = "blocked/model:free";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        text: async () =>
+          JSON.stringify({
+            error: { message: "Provider returned error: temporarily rate-limited upstream." }
+          })
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const extraction = {
+        doi: "10.1/test",
+        checkedAt: "2026-05-24T00:00:00Z",
+        oaStatus: "not_oa",
+        sourceStatus: "abstract_only",
+        sourceUrl: "",
+        license: "",
+        sectionsUsed: ["Abstract"],
+        methodsText: "",
+        findingsText: "",
+        conclusionsText: "",
+        abstract: "Methods: Interviews were conducted. Results: Participants valued continuity.",
+        extractionWarnings: [],
+        confidence: "medium",
+        title: "Continuity study",
+        isRetracted: false
+      } as ArticleExtraction;
+      const result = await summarizeWithOpenRouter(
+        [{ title: "Continuity study", authors: ["A Nurse"], year: 2026, journal: "Journal", doi: "10.1/test" }],
+        [extraction]
+      );
+      expect(result.model).toBe("deterministic-fallback");
+      expect(result.parsed.articleNotes[0].findingsUsed).toContain("Participants valued continuity");
+      expect(result.raw).toContain("fallback");
     } finally {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
