@@ -241,7 +241,7 @@ export default async (request: Request) => {
   const store = getStore({ name: STORE_NAME, consistency: "strong" });
   const key = cacheKey(identifier);
   const cached = (await store.get(key, { type: "json" })) as AbstractResult | null;
-  if (cached) return jsonResponse({ ...cached, cached: true });
+  if (cached?.abstract) return jsonResponse({ ...cached, cached: true });
 
   const errors: string[] = [];
   if (doi) {
@@ -279,7 +279,6 @@ export default async (request: Request) => {
   }
 
   const result: AbstractResult = { abstract: "", source: "", sourceUrl: "", cached: false, errors: errors.slice(0, 3) };
-  await store.setJSON(key, result);
   return jsonResponse(result);
 };
 
