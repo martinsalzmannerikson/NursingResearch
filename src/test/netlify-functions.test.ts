@@ -12,6 +12,7 @@ describe("Netlify functions compile and expose modern handlers", () => {
     const downloadSummaryPdf = await import("../../netlify/functions/download-summary-pdf.mts");
     const openrouterHealth = await import("../../netlify/functions/openrouter-health.mts");
     const briefDebug = await import("../../netlify/functions/brief-debug.mts");
+    const articleAbstract = await import("../../netlify/functions/article-abstract.mts");
     expect(typeof latest.default).toBe("function");
     expect(typeof status.default).toBe("function");
     expect(typeof refresh.default).toBe("function");
@@ -22,6 +23,13 @@ describe("Netlify functions compile and expose modern handlers", () => {
     expect(typeof downloadSummaryPdf.default).toBe("function");
     expect(typeof openrouterHealth.default).toBe("function");
     expect(typeof briefDebug.default).toBe("function");
+    expect(typeof articleAbstract.default).toBe("function");
+  });
+
+  it("extracts abstracts from publisher HTML metadata", async () => {
+    const { extractAbstractFromHtml } = await import("../../netlify/functions/article-abstract.mts");
+    const html = `<html><head><meta name="citation_abstract" content="This study evaluates nursing education outcomes using a structured intervention. The abstract is long enough to be treated as publisher metadata and should be returned cleanly." /></head></html>`;
+    expect(extractAbstractFromHtml(html)).toContain("nursing education outcomes");
   });
 
   it("configures the scheduled update daily", async () => {

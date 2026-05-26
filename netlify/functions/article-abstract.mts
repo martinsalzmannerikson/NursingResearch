@@ -1,0 +1,235 @@
+import { createHash } from "node:crypto";
+import { getStore } from "@netlify/blobs";
+import type { Config } from "@netlify/functions";
+import { jsonResponse } from "./_shared/env.js";
+
+const STORE_NAME = "article-abstract-cache";
+const MAX_HTML_BYTES = 600_000;
+const FETCH_TIMEOUT_MS = 12_000;
+
+type AbstractResult = {
+  abstract: string;
+  source: string;
+  sourceUrl: string;
+  cached: boolean;
+  errors?: string[];
+};
+
+function normalizeDoi(value = "") {
+  return value
+    .trim()
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//i, "")
+    .replace(/^doi:\s*/i, "")
+    .toLowerCase();
+}
+
+function safeUrl(value = "") {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function cacheKey(identifier: string) {
+  return `abstracts/${createHash("sha256").update(identifier).digest("hex")}.json`;
+}
+
+function decodeEntities(value = "") {
+  const named: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    nbsp: " "
+  };
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (_, entity: string) => {
+    const lower = entity.toLowerCase();
+    if (lower in named) return named[lower];
+    if (lower.startsWith("#x")) return String.fromCodePoint(Number.parseInt(lower.slice(2), 16));
+    if (lower.startsWith("#")) return String.fromCodePoint(Number.parseInt(lower.slice(1), 10));
+    return " ";
+  });
+}
+
+function stripHtml(value = "") {
+  return decodeEntities(
+    value
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function attr(tag: string, name: string) {
+  const pattern = new RegExp(`${name}\\s*=\\s*(['"])(.*?)\\1`, "i");
+  return decodeEntities(tag.match(pattern)?.[2] ?? "");
+}
+
+function plausibleAbstract(value = "") {
+  const text = stripHtml(value);
+  if (text.length < 80) return "";
+  if (!/[.!?]/.test(text) || text.split(/\s+/).length < 14) return "";
+  if (/^(cookie|javascript|enable cookies|access denied|just a moment)/i.test(text)) return "";
+  return text.slice(0, 3500);
+}
+
+function firstJsonLdAbstract(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstJsonLdAbstract(item);
+      if (found) return found;
+    }
+    return "";
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of ["abstract", "description"]) {
+    const field = record[key];
+    if (typeof field === "string") {
+      const found = plausibleAbstract(field);
+      if (found) return found;
+    }
+    if (Array.isArray(field)) {
+      const found = firstJsonLdAbstract(field);
+      if (found) return found;
+    }
+  }
+  return firstJsonLdAbstract(record["@graph"]);
+}
+
+export function extractAbstractFromHtml(html: string) {
+  const metaCandidates: string[] = [];
+  const preferredNames = new Set([
+    "citation_abstract",
+    "dc.description",
+    "dcterms.abstract",
+    "dcterms.description",
+    "description",
+    "og:description",
+    "twitter:description"
+  ]);
+
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const name = (attr(tag, "name") || attr(tag, "property")).toLowerCase();
+    const content = attr(tag, "content");
+    if (preferredNames.has(name) && content) metaCandidates.push(content);
+  }
+
+  for (const candidate of metaCandidates) {
+    const found = plausibleAbstract(candidate);
+    if (found) return found;
+  }
+
+  for (const match of html.matchAll(/<script\b[^>]*type\s*=\s*['"]application\/ld\+json['"][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const found = firstJsonLdAbstract(JSON.parse(decodeEntities(match[1])));
+      if (found) return found;
+    } catch {
+      // Ignore malformed publisher JSON-LD and continue with deterministic HTML extraction.
+    }
+  }
+
+  const sectionMatch =
+    html.match(/<(section|div|article)\b[^>]*(abstract|summary)[^>]*>([\s\S]{80,8000}?)<\/\1>/i)?.[3] ?? "";
+  return plausibleAbstract(sectionMatch);
+}
+
+async function fetchHtml(url: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        Accept: "text/html,application/xhtml+xml,text/plain;q=0.8,*/*;q=0.1",
+        "User-Agent": "NursingResearchMonitor/1.0 abstract metadata fetcher"
+      }
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!/text\/html|application\/xhtml\+xml|text\/plain/i.test(contentType)) {
+      throw new Error(`unsupported content type ${contentType || "unknown"}`);
+    }
+    const contentLength = Number(response.headers.get("content-length") || 0);
+    if (contentLength > MAX_HTML_BYTES) throw new Error("HTML response too large");
+    if (!response.body) return { html: await response.text(), finalUrl: response.url || url };
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    while (received < MAX_HTML_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      received += value.length;
+      if (received > MAX_HTML_BYTES) throw new Error("HTML response too large");
+      chunks.push(value);
+    }
+    const merged = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return { html: new TextDecoder("utf-8").decode(merged), finalUrl: response.url || url };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export default async (request: Request) => {
+  if (request.method !== "GET") return jsonResponse({ error: "Method not allowed" }, { status: 405 });
+
+  const url = new URL(request.url);
+  const doi = normalizeDoi(url.searchParams.get("doi") ?? "");
+  const doiUrl = doi ? `https://doi.org/${doi}` : "";
+  const candidates = [
+    { source: "full_text", url: safeUrl(url.searchParams.get("oaUrl") ?? "") },
+    { source: "doi", url: doiUrl },
+    { source: "article_url", url: safeUrl(url.searchParams.get("url") ?? "") }
+  ].filter((candidate) => candidate.url && !/openalex\.org/i.test(candidate.url));
+
+  const deduped = candidates.filter(
+    (candidate, index, all) => all.findIndex((other) => other.url.toLowerCase() === candidate.url.toLowerCase()) === index
+  );
+  const identifier = doi || deduped[0]?.url || "";
+  if (!identifier) return jsonResponse({ abstract: "", source: "", sourceUrl: "", cached: false });
+
+  const store = getStore({ name: STORE_NAME, consistency: "strong" });
+  const key = cacheKey(identifier);
+  const cached = (await store.get(key, { type: "json" })) as AbstractResult | null;
+  if (cached) return jsonResponse({ ...cached, cached: true });
+
+  const errors: string[] = [];
+  for (const candidate of deduped) {
+    try {
+      const { html, finalUrl } = await fetchHtml(candidate.url);
+      const abstract = extractAbstractFromHtml(html);
+      if (!abstract) throw new Error("no abstract metadata found");
+      const result: AbstractResult = {
+        abstract,
+        source: candidate.source,
+        sourceUrl: finalUrl,
+        cached: false
+      };
+      await store.setJSON(key, result);
+      return jsonResponse(result);
+    } catch (error) {
+      errors.push(`${candidate.source}: ${(error as Error).message}`);
+    }
+  }
+
+  const result: AbstractResult = { abstract: "", source: "", sourceUrl: "", cached: false, errors: errors.slice(0, 3) };
+  await store.setJSON(key, result);
+  return jsonResponse(result);
+};
+
+export const config: Config = {};

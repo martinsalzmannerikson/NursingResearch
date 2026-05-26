@@ -56,6 +56,19 @@ export async function loadJournalData(
   return normalizePayload(await fetchJson(fetchImpl, `/api/journal-latest?${params}`, signal));
 }
 
+export async function loadArticleAbstract(item: ResearchItem, fetchImpl: typeof fetch = fetch, signal?: AbortSignal) {
+  const params = new URLSearchParams();
+  if (item.doi) params.set("doi", item.doi);
+  if (item.url) params.set("url", item.url);
+  if (item.oa_url) params.set("oaUrl", item.oa_url);
+  return fetchJson(fetchImpl, `/api/article-abstract?${params}`, signal) as Promise<{
+    abstract: string;
+    source: string;
+    sourceUrl: string;
+    cached: boolean;
+  }>;
+}
+
 export async function startSummaryJob(items: ResearchItem[], fetchImpl: typeof fetch = fetch) {
   const response = await fetchImpl("/api/start-summary-job", {
     method: "POST",

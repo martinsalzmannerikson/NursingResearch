@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { latestPayload } from "./test/fixtures";
@@ -7,7 +7,7 @@ describe("Nursing Research Monitor smoke tests", () => {
   it("renders the home page, monitor title, and publication cards when data exists", async () => {
     render(<App initialData={latestPayload} />);
     expect(screen.getByRole("heading", { name: /^nursing research monitor$/i })).toBeInTheDocument();
-    expect(screen.getByText(/© Salzmann-Erikson, 2026/i)).toBeInTheDocument();
+    expect(screen.getByText(/Salzmann-Erikson, 2026/i)).toBeInTheDocument();
     expect(screen.getByText(/Digital nursing education improves clinical reasoning/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Journal of Advanced Nursing/i).length).toBeGreaterThan(0);
   });
@@ -17,13 +17,36 @@ describe("Nursing Research Monitor smoke tests", () => {
     expect(screen.getByText(/No articles in current filter window/i)).toBeInTheDocument();
   });
 
-  it("enables PDF brief generation after selecting an article", async () => {
+  it("does not render the removed PDF brief selection controls", async () => {
     render(<App initialData={latestPayload} />);
-    const button = screen.getByRole("button", { name: /Generate PDF brief/i });
-    expect(button).toBeDisabled();
-    fireEvent.click(screen.getAllByLabelText(/Select for PDF brief/i)[0]);
-    expect(button).not.toBeDisabled();
-    expect(screen.getByText(/Selected 1\/6/i)).toBeInTheDocument();
+    expect(screen.queryByText(/AI FINDINGS BRIEF/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Generate PDF brief/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Select for PDF brief/i)).not.toBeInTheDocument();
+  });
+
+  it("fetches missing abstracts from DOI/full text metadata and removes OpenAlex article links", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        abstract: "Fetched publisher abstract from public DOI metadata.",
+        source: "doi",
+        sourceUrl: "https://doi.org/10.1000/a",
+        cached: false
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <App
+        initialData={{
+          ...latestPayload,
+          items: [{ ...latestPayload.items[0], abstract: "" }]
+        }}
+      />
+    );
+    expect(screen.queryByText(/OpenAlex/i, { selector: "a" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Fetched publisher abstract/i)).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/article-abstract\?/), expect.any(Object));
+    vi.unstubAllGlobals();
   });
 
   it("renders the resolver guidance when no OpenAlex sources are resolved", async () => {

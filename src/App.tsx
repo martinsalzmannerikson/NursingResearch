@@ -4,14 +4,13 @@ import {
   Clipboard,
   Database,
   ExternalLink,
-  FileText,
   Filter,
   RefreshCw,
   Terminal
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import journalsManifest from "./data/journals.json";
-import { loadJournalData, loadLatestData, loadSummaryStatus, startSummaryJob } from "./lib/api";
+import { loadArticleAbstract, loadJournalData, loadLatestData } from "./lib/api";
 import {
   compactAuthors,
   defaultFilters,
@@ -20,10 +19,9 @@ import {
   formatDateTime,
   uniqueSorted
 } from "./lib/monitor";
-import type { BriefJobStatus, LatestPayload, MonitorFilters, ResearchItem } from "./types";
+import type { LatestPayload, MonitorFilters, ResearchItem } from "./types";
 
 const visibleStep = 25;
-const MAX_ARTICLES_PER_BRIEF = 6;
 const manifestJournalNames = (journalsManifest.journals as Array<{ journal_name: string }>).map(
   (journal) => journal.journal_name
 );
@@ -82,12 +80,7 @@ export default function App({ initialData }: AppProps) {
   const [filters, setFilters] = useState<MonitorFilters>(defaultFilters);
   const [visibleCount, setVisibleCount] = useState(visibleStep);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [briefStatus, setBriefStatus] = useState<BriefJobStatus | null>(null);
-  const [briefError, setBriefError] = useState("");
-  const [briefStarting, setBriefStarting] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
-  const downloadedBriefRef = useRef<string | null>(null);
 
   const items = useMemo(() => data?.items ?? [], [data]);
   const activeItems = useMemo(
@@ -101,11 +94,6 @@ export default function App({ initialData }: AppProps) {
   const publishers = useMemo(() => uniqueSorted(activeItems.map((item) => item.publisher)), [activeItems]);
   const filteredItems = useMemo(() => filterAndSortItems(activeItems, filters), [activeItems, filters]);
   const visibleItems = filteredItems.slice(0, visibleCount);
-  const selectedItems = useMemo(
-    () => activeItems.filter((item) => selectedIds.has(itemKey(item))),
-    [activeItems, selectedIds]
-  );
-  const selectedOverLimit = selectedItems.length > MAX_ARTICLES_PER_BRIEF;
   const lastUpdated = data?.status.lastUpdated ?? data?.metadata?.generated_at ?? null;
   const hasNoResolvedSources = !loading && (data?.status.resolvedSourceCount ?? 0) === 0 && (data?.status.itemCount ?? 0) === 0;
 
@@ -153,77 +141,6 @@ export default function App({ initialData }: AppProps) {
     setFilters((current) => ({ ...current, [key]: value }));
   };
 
-  const toggleSelected = (item: ResearchItem) => {
-    const key = itemKey(item);
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const generateBrief = async () => {
-    setBriefError("");
-    setBriefStatus(null);
-    setBriefStarting(true);
-    downloadedBriefRef.current = null;
-    try {
-      const start = await startSummaryJob(selectedItems);
-      setBriefStatus({
-        jobId: start.jobId,
-        status: start.status,
-        progress: { step: "queued", message: "Queued", completed: 0, total: selectedItems.length },
-        errors: [],
-        downloadAvailable: false,
-        downloadUrl: null
-      });
-    } catch (error) {
-      setBriefError((error as Error).message);
-    } finally {
-      setBriefStarting(false);
-    }
-  };
-
-  useEffect(() => {
-    if (
-      !briefStatus?.jobId ||
-      briefStatus.status === "completed" ||
-      briefStatus.status === "completed_with_fallback" ||
-      briefStatus.status === "failed_model_unavailable" ||
-      briefStatus.status === "failed_empty_model_response" ||
-      briefStatus.status === "failed_no_usable_article_text" ||
-      briefStatus.status === "failed"
-    ) {
-      return;
-    }
-    const timer = window.setInterval(async () => {
-      try {
-        setBriefStatus(await loadSummaryStatus(briefStatus.jobId));
-      } catch (error) {
-        setBriefError((error as Error).message);
-      }
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [briefStatus?.jobId, briefStatus?.status]);
-
-  useEffect(() => {
-    if (
-      (briefStatus?.status !== "completed" && briefStatus?.status !== "completed_with_fallback") ||
-      !briefStatus.downloadUrl ||
-      downloadedBriefRef.current === briefStatus.jobId
-    ) {
-      return;
-    }
-    downloadedBriefRef.current = briefStatus.jobId;
-    const link = document.createElement("a");
-    link.href = briefStatus.downloadUrl;
-    link.download = `nursing-research-monitor-findings-brief-${briefStatus.jobId}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  }, [briefStatus?.downloadUrl, briefStatus?.jobId, briefStatus?.status]);
-
   return (
     <main className="crt-shell">
       <div className="scanlines" aria-hidden="true" />
@@ -266,33 +183,6 @@ export default function App({ initialData }: AppProps) {
           <button className="icon-button" type="button" onClick={refresh} aria-label="Refresh monitor data">
             <RefreshCw size={18} aria-hidden="true" />
           </button>
-        </section>
-
-        <section className="brief-panel panel" aria-label="AI findings brief">
-          <div className="panel-title">
-            <FileText size={16} aria-hidden="true" />
-            AI FINDINGS BRIEF
-          </div>
-          <div className="brief-actions">
-            <span>
-              Selected {selectedItems.length}/{MAX_ARTICLES_PER_BRIEF}
-            </span>
-            {selectedOverLimit ? <strong>Select no more than {MAX_ARTICLES_PER_BRIEF} articles.</strong> : null}
-            <button
-              type="button"
-              onClick={generateBrief}
-              disabled={selectedItems.length === 0 || selectedOverLimit || briefStarting}
-            >
-              {briefStarting ? "Queueing..." : "Generate PDF brief"}
-            </button>
-            {selectedItems.length ? (
-              <button type="button" onClick={() => setSelectedIds(new Set())}>
-                Clear selection
-              </button>
-            ) : null}
-          </div>
-          {briefError ? <p className="brief-error">{briefError}</p> : null}
-          {briefStatus ? <BriefJobPanel status={briefStatus} /> : null}
         </section>
 
         <section className="filter-panel panel" aria-label="Filters">
@@ -397,12 +287,7 @@ export default function App({ initialData }: AppProps) {
           ) : null}
 
           {visibleItems.map((item) => (
-            <PublicationCard
-              key={`${item.id}-${item.publication_date}`}
-              item={item}
-              selected={selectedIds.has(itemKey(item))}
-              onToggleSelected={() => toggleSelected(item)}
-            />
+            <PublicationCard key={`${item.id}-${item.publication_date}`} item={item} />
           ))}
 
           {visibleItems.length < filteredItems.length ? (
@@ -502,90 +387,40 @@ function SelectField({ label, value, onChange, options, labels = {}, allLabel, a
   );
 }
 
-function BriefJobPanel({ status }: { status: BriefJobStatus }) {
-  const source = status.sourceStatusSummary;
-  const stepLabels: Record<BriefJobStatus["progress"]["step"], string> = {
-    queued: "Queued",
-    checking_open_access: "Checking open access",
-    retrieving_fulltext: "Retrieving full text",
-    extracting_sections: "Extracting Methods/Findings/Conclusions",
-    summarising: "Summarising",
-    generating_pdf: "Generating PDF",
-    completed: "Ready",
-    failed: "Failed"
-  };
-  const currentStepLabel =
-    status.status === "completed_with_fallback"
-      ? "Ready with fallback"
-      : status.status === "failed_model_unavailable"
-        ? "AI synthesis unavailable"
-        : status.status === "failed_empty_model_response"
-          ? "Empty model response"
-          : status.status === "failed_no_usable_article_text"
-            ? "No usable article text"
-        : stepLabels[status.progress.step];
-  return (
-    <div className="brief-status" role="status" aria-live="polite">
-      <strong>{currentStepLabel}</strong>
-      <span>
-        {status.status === "failed_model_unavailable"
-          ? "AI synthesis could not be generated. Try another model or adjust OpenRouter privacy settings."
-          : status.status === "failed_empty_model_response"
-            ? "AI synthesis could not be generated because the selected model returned an empty response."
-            : status.status === "failed_no_usable_article_text"
-              ? "No usable article text was available for the selected records. Try selecting articles with abstracts or OA full text."
-          : status.status === "completed"
-            ? "AI Findings Brief ready."
-            : status.progress.message}
-      </span>
-      {source ? (
-        <span>
-          OA full text: {source.oaFullTextUsed}; abstract only: {source.abstractOnly}; extraction failed:{" "}
-          {source.fulltextFoundButExtractionFailed}; no DOI: {source.noDoi}; insufficient data: {source.insufficientData}
-        </span>
-      ) : null}
-      {status.status === "completed_with_fallback" ? (
-        <span className="brief-warning">PDF generated with fallback notes. The selected language model was not available.</span>
-      ) : null}
-      {status.status === "failed_model_unavailable" ? (
-        <span className="brief-error">
-          AI synthesis could not be generated. The selected OpenRouter model was unavailable or blocked by privacy/data
-          policy settings.
-        </span>
-      ) : status.status === "failed_empty_model_response" ? (
-        <span className="brief-error">The model returned an empty response, so no PDF was generated.</span>
-      ) : status.status === "failed_no_usable_article_text" ? (
-        <span className="brief-error">
-          No usable article text was available for the selected records. Try selecting articles with abstracts or OA full text.
-        </span>
-      ) : status.errors.length ? (
-        <span className={status.status === "completed_with_fallback" ? "brief-warning" : "brief-error"}>
-          {status.errors.join(" ").slice(0, 280)}
-        </span>
-      ) : null}
-      {status.modelUsed ? <span>Model: {status.modelUsed}</span> : null}
-      {status.downloadAvailable && status.downloadUrl ? (
-        <a className="download-brief" href={status.downloadUrl}>
-          {status.status === "completed_with_fallback" ? "Download fallback notes" : "Download AI brief"}
-        </a>
-      ) : null}
-    </div>
-  );
-}
-
-function PublicationCard({
-  item,
-  selected,
-  onToggleSelected
-}: {
-  item: ResearchItem;
-  selected: boolean;
-  onToggleSelected: () => void;
-}) {
+function PublicationCard({ item }: { item: ResearchItem }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
-  const abstract = item.abstract || "No abstract available from OpenAlex.";
+  const [fallbackAbstract, setFallbackAbstract] = useState("");
+  const [fallbackStatus, setFallbackStatus] = useState<"idle" | "loading" | "found" | "missing">("idle");
+  const cachedAbstract = item.abstract?.trim() ?? "";
+  const abstract =
+    cachedAbstract ||
+    fallbackAbstract ||
+    (fallbackStatus === "loading"
+      ? "Fetching abstract from DOI/full text metadata..."
+      : "Abstract not available in cached data or DOI/full-text metadata. Use the DOI or Full text link to inspect the source.");
   const abstractPreview = expanded || abstract.length < 360 ? abstract : `${abstract.slice(0, 360).trim()}...`;
+
+  useEffect(() => {
+    if (cachedAbstract || fallbackAbstract || fallbackStatus !== "idle") return;
+    if (!item.doi && !item.oa_url && !item.url) {
+      setFallbackStatus("missing");
+      return;
+    }
+    const controller = new AbortController();
+    setFallbackStatus("loading");
+    loadArticleAbstract(item, fetch, controller.signal)
+      .then((result) => {
+        if (result.abstract) {
+          setFallbackAbstract(result.abstract);
+          setFallbackStatus("found");
+        } else {
+          setFallbackStatus("missing");
+        }
+      })
+      .catch(() => setFallbackStatus("missing"));
+    return () => controller.abort();
+  }, [cachedAbstract, fallbackAbstract, fallbackStatus, item]);
 
   const copyCitation = async () => {
     await navigator.clipboard?.writeText(formatApaCitation(item));
@@ -595,10 +430,6 @@ function PublicationCard({
 
   return (
     <article className="publication-card panel">
-      <label className="select-article">
-        <input type="checkbox" checked={selected} onChange={onToggleSelected} />
-        <span>Select for PDF brief</span>
-      </label>
       <div className="publication-meta">
         <span>{item.publication_date || item.publication_year || "date unknown"}</span>
         <span>{item.journal_name}</span>
@@ -614,15 +445,11 @@ function PublicationCard({
         ))}
       </div>
       <p className="abstract">{abstractPreview}</p>
+      {!cachedAbstract && fallbackStatus === "found" ? <p className="abstract-source">Abstract fetched from DOI/full text metadata.</p> : null}
       <div className="card-actions">
         {item.doi ? (
           <a href={item.doi} target="_blank" rel="noreferrer">
             DOI <ExternalLink size={14} aria-hidden="true" />
-          </a>
-        ) : null}
-        {item.openalex_id ? (
-          <a href={item.openalex_id} target="_blank" rel="noreferrer">
-            OpenAlex <ExternalLink size={14} aria-hidden="true" />
           </a>
         ) : null}
         {item.oa_url ? (

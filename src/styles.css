@@ -69,10 +69,13 @@ a {
   margin: 0 auto 8px;
   position: relative;
   z-index: 2;
-  color: var(--muted);
-  font-size: 0.78rem;
+  color: #ffffff;
+  font-size: clamp(0.95rem, 1.2vw, 1.08rem);
+  font-weight: 700;
   text-align: right;
-  text-shadow: 0 0 8px rgba(51, 230, 255, 0.22);
+  text-shadow:
+    0 0 7px rgba(255, 255, 255, 0.95),
+    0 0 18px rgba(51, 230, 255, 0.55);
 }
 
 .terminal-frame {
@@ -307,21 +310,6 @@ h1 {
   padding: 18px;
 }
 
-.select-article {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  color: var(--cyan);
-  font-size: 0.82rem;
-}
-
-.select-article input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--green);
-}
-
 .publication-meta {
   display: flex;
   flex-wrap: wrap;
@@ -364,6 +352,12 @@ h1 {
   color: #d8fff6;
   line-height: 1.6;
   margin: 14px 0;
+}
+
+.abstract-source {
+  margin: -6px 0 12px;
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .card-actions a,
