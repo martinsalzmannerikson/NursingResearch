@@ -79,9 +79,43 @@ function wrap(text: string, maxChars: number) {
 }
 
 type MarkdownBlock = { type: "h1" | "h2" | "p" | "li"; text: string };
+type BriefRenderMode = "structured" | "raw" | "short" | "empty";
+
+export type BriefRenderModel = {
+  mode: BriefRenderMode;
+  titleExists: boolean;
+  contentLength: number;
+  sectionNames: string[];
+  synthesis: string;
+  keyFindings: string[];
+  methodologicalBasis: string;
+  implications: string[];
+  cautions: string[];
+  articleSourceNotes: string[];
+  rawMarkdown: string;
+  sectionLengths: Record<string, number>;
+  requiredEmptySections: string[];
+};
+
+function canonicalHeading(value: string) {
+  const heading = value
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^\d+[.)]\s*/, "")
+    .replace(/:$/, "")
+    .trim()
+    .toLowerCase();
+  if (/^ai findings brief$/.test(heading)) return "AI Findings Brief";
+  if (/^synthesis( in brief)?$|^brief synthesis$|^executive synthesis$|^summary$/.test(heading)) return "Synthesis in brief";
+  if (/^(main |key )?findings( across (the )?selected articles)?$/.test(heading)) return "Main findings across the selected articles";
+  if (/^methodological (basis|profile)$|^methods? (basis|represented)$/.test(heading)) return "Methodological basis";
+  if (/^implications( for nursing research)?$/.test(heading)) return "Implications for nursing research";
+  if (/^cautions?$|^limitations?$|^cautions and limitations$/.test(heading)) return "Cautions";
+  if (/^article (source )?notes?$|^source notes?$/.test(heading)) return "Article source notes";
+  return value.trim();
+}
 
 export function normalizeBriefMarkdown(markdown: string) {
-  return stripMarkupTags(markdown)
+  const normalized = stripMarkupTags(markdown)
     .replace(/[\u2018\u2019\u201a]/g, "'")
     .replace(/[\u201c\u201d\u201e]/g, '"')
     .replace(/[\u2013\u2014\u2212]/g, "-")
@@ -92,6 +126,25 @@ export function normalizeBriefMarkdown(markdown: string) {
     .replace(/```/g, "")
     .replace(/\s+(#{1,2}\s+)/g, "\n\n$1")
     .replace(/\s+([-*]\s+)/g, "\n$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return normalized
+    .split("\n")
+    .map((line) => {
+      const h1 = line.match(/^#\s+(.+)$/);
+      if (h1) return `# ${canonicalHeading(h1[1])}`;
+      const h2 = line.match(/^##\s+(.+)$/);
+      if (h2) return `## ${canonicalHeading(h2[1])}`;
+      const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+      if (numbered) {
+        const canonical = canonicalHeading(numbered[1]);
+        return canonical === numbered[1].trim() ? line : `## ${canonical}`;
+      }
+      const bare = canonicalHeading(line);
+      if (bare === "AI Findings Brief") return "# AI Findings Brief";
+      return bare !== line.trim() && bare !== "AI Findings Brief" ? `## ${bare}` : line;
+    })
+    .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -134,6 +187,105 @@ export function parseBriefMarkdown(markdown: string): MarkdownBlock[] {
   return blocks;
 }
 
+function appendSectionText(current: string, text: string) {
+  return `${current} ${text}`.replace(/\s+/g, " ").trim();
+}
+
+export function buildBriefRenderModel(markdown: string): BriefRenderModel {
+  const normalized = normalizeBriefMarkdown(markdown);
+  const contentLength = normalized.length;
+  const blocks = parseBriefMarkdown(normalized);
+  const titleExists = blocks.some((block) => block.type === "h1" && /ai findings brief/i.test(block.text));
+  const sections: Record<string, { text: string; bullets: string[] }> = {};
+  let currentSection = "";
+
+  for (const block of blocks) {
+    if (block.type === "h2") {
+      currentSection = canonicalHeading(block.text);
+      sections[currentSection] ??= { text: "", bullets: [] };
+      continue;
+    }
+    if (!currentSection || block.type === "h1") continue;
+    sections[currentSection] ??= { text: "", bullets: [] };
+    if (block.type === "li") sections[currentSection].bullets.push(block.text);
+    else sections[currentSection].text = appendSectionText(sections[currentSection].text, block.text);
+  }
+
+  const sectionNames = Object.keys(sections);
+  const recognized = [
+    "Synthesis in brief",
+    "Main findings across the selected articles",
+    "Methodological basis",
+    "Implications for nursing research",
+    "Cautions",
+    "Article source notes"
+  ];
+  const hasRecognizedSections = sectionNames.some((name) => recognized.includes(name));
+  const sectionLengths = Object.fromEntries(
+    sectionNames.map((name) => [name, (sections[name]?.text.length ?? 0) + sections[name].bullets.join(" ").length])
+  );
+
+  const synthesis = sections["Synthesis in brief"]?.text ?? "";
+  const keyFindings = sections["Main findings across the selected articles"]?.bullets ?? [];
+  const methodologicalBasis = sections["Methodological basis"]?.text ?? "";
+  const implications = sections["Implications for nursing research"]?.bullets ?? [];
+  const cautions = sections.Cautions?.bullets.length ? sections.Cautions.bullets : sections.Cautions?.text ? [sections.Cautions.text] : [];
+  const articleSourceNotes = sections["Article source notes"]?.bullets ?? [];
+  const requiredEmptySections = recognized.filter((name) => (sectionLengths[name] ?? 0) === 0);
+
+  if (contentLength === 0) {
+    return {
+      mode: "empty",
+      titleExists,
+      contentLength,
+      sectionNames,
+      synthesis: "",
+      keyFindings: [],
+      methodologicalBasis: "",
+      implications: [],
+      cautions: [],
+      articleSourceNotes: [],
+      rawMarkdown: "",
+      sectionLengths,
+      requiredEmptySections: recognized
+    };
+  }
+
+  if (!hasRecognizedSections) {
+    return {
+      mode: contentLength <= 100 ? "short" : "raw",
+      titleExists,
+      contentLength,
+      sectionNames: ["AI-generated synthesis"],
+      synthesis: normalized,
+      keyFindings: [],
+      methodologicalBasis: "",
+      implications: [],
+      cautions: [],
+      articleSourceNotes: [],
+      rawMarkdown: normalized,
+      sectionLengths: { "AI-generated synthesis": contentLength },
+      requiredEmptySections: recognized
+    };
+  }
+
+  return {
+    mode: "structured",
+    titleExists,
+    contentLength,
+    sectionNames,
+    synthesis,
+    keyFindings,
+    methodologicalBasis,
+    implications,
+    cautions,
+    articleSourceNotes,
+    rawMarkdown: normalized,
+    sectionLengths,
+    requiredEmptySections
+  };
+}
+
 function briefCoverage(extractions: ArticleExtraction[]) {
   const coverage = sourceCoverage(extractions);
   return {
@@ -161,6 +313,7 @@ export function generateFindingsBriefPdf({
   const generatedAt = new Date().toISOString().slice(0, 10);
   const isFallback = synthesisMode === "fallback";
   const coverage = briefCoverage(extractions);
+  const renderModel = buildBriefRenderModel(markdown);
 
   function addPage() {
     page = { commands: [], index: pages.length + 1 };
@@ -245,11 +398,43 @@ export function generateFindingsBriefPdf({
   paragraph(`Generated ${generatedAt}. Selected articles: ${articles.length}.`, 10, "muted");
   coverageRow();
 
-  for (const block of parseBriefMarkdown(markdown)) {
-    if (block.type === "h1") continue;
-    if (block.type === "h2") h2(block.text);
-    else if (block.type === "li") bullet(block.text);
-    else paragraph(block.text, 9.3);
+  if (renderModel.mode === "raw") {
+    h2("AI-generated synthesis");
+    for (const block of parseBriefMarkdown(renderModel.rawMarkdown)) {
+      if (block.type === "h1") continue;
+      if (block.type === "h2") h2(block.text);
+      else if (block.type === "li") bullet(block.text);
+      else paragraph(block.text, 9.3);
+    }
+  } else if (renderModel.mode === "short") {
+    h2("AI-generated synthesis");
+    paragraph("The model returned a very short response.", 9, "warning");
+    paragraph(renderModel.rawMarkdown, 9.3);
+  } else {
+    if (renderModel.synthesis) {
+      h2("Synthesis in brief");
+      paragraph(renderModel.synthesis, 9.3);
+    }
+    if (renderModel.keyFindings.length) {
+      h2("Main findings across the selected articles");
+      renderModel.keyFindings.forEach((finding) => bullet(finding));
+    }
+    if (renderModel.methodologicalBasis) {
+      h2("Methodological basis");
+      paragraph(renderModel.methodologicalBasis, 9.3);
+    }
+    if (renderModel.implications.length) {
+      h2("Implications for nursing research");
+      renderModel.implications.forEach((implication) => bullet(implication));
+    }
+    if (renderModel.cautions.length) {
+      h2("Cautions");
+      renderModel.cautions.forEach((caution) => bullet(caution));
+    }
+    if (renderModel.articleSourceNotes.length) {
+      h2("Article source notes");
+      renderModel.articleSourceNotes.forEach((note) => bullet(note));
+    }
   }
 
   h2("Provenance note");

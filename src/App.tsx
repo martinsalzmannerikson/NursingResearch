@@ -191,6 +191,8 @@ export default function App({ initialData }: AppProps) {
       briefStatus.status === "completed" ||
       briefStatus.status === "completed_with_fallback" ||
       briefStatus.status === "failed_model_unavailable" ||
+      briefStatus.status === "failed_empty_model_response" ||
+      briefStatus.status === "failed_no_usable_article_text" ||
       briefStatus.status === "failed"
     ) {
       return;
@@ -517,6 +519,10 @@ function BriefJobPanel({ status }: { status: BriefJobStatus }) {
       ? "Ready with fallback"
       : status.status === "failed_model_unavailable"
         ? "AI synthesis unavailable"
+        : status.status === "failed_empty_model_response"
+          ? "Empty model response"
+          : status.status === "failed_no_usable_article_text"
+            ? "No usable article text"
         : stepLabels[status.progress.step];
   return (
     <div className="brief-status" role="status" aria-live="polite">
@@ -524,6 +530,10 @@ function BriefJobPanel({ status }: { status: BriefJobStatus }) {
       <span>
         {status.status === "failed_model_unavailable"
           ? "AI synthesis could not be generated. Try another model or adjust OpenRouter privacy settings."
+          : status.status === "failed_empty_model_response"
+            ? "AI synthesis could not be generated because the selected model returned an empty response."
+            : status.status === "failed_no_usable_article_text"
+              ? "No usable article text was available for the selected records. Try selecting articles with abstracts or OA full text."
           : status.status === "completed"
             ? "AI Findings Brief ready."
             : status.progress.message}
@@ -541,6 +551,12 @@ function BriefJobPanel({ status }: { status: BriefJobStatus }) {
         <span className="brief-error">
           AI synthesis could not be generated. The selected OpenRouter model was unavailable or blocked by privacy/data
           policy settings.
+        </span>
+      ) : status.status === "failed_empty_model_response" ? (
+        <span className="brief-error">The model returned an empty response, so no PDF was generated.</span>
+      ) : status.status === "failed_no_usable_article_text" ? (
+        <span className="brief-error">
+          No usable article text was available for the selected records. Try selecting articles with abstracts or OA full text.
         </span>
       ) : status.errors.length ? (
         <span className={status.status === "completed_with_fallback" ? "brief-warning" : "brief-error"}>

@@ -10,6 +10,8 @@ describe("Netlify functions compile and expose modern handlers", () => {
     const processSummaryBackground = await import("../../netlify/functions/process-summary-background.mts");
     const getSummaryStatus = await import("../../netlify/functions/get-summary-status.mts");
     const downloadSummaryPdf = await import("../../netlify/functions/download-summary-pdf.mts");
+    const openrouterHealth = await import("../../netlify/functions/openrouter-health.mts");
+    const briefDebug = await import("../../netlify/functions/brief-debug.mts");
     expect(typeof latest.default).toBe("function");
     expect(typeof status.default).toBe("function");
     expect(typeof refresh.default).toBe("function");
@@ -18,6 +20,8 @@ describe("Netlify functions compile and expose modern handlers", () => {
     expect(typeof processSummaryBackground.default).toBe("function");
     expect(typeof getSummaryStatus.default).toBe("function");
     expect(typeof downloadSummaryPdf.default).toBe("function");
+    expect(typeof openrouterHealth.default).toBe("function");
+    expect(typeof briefDebug.default).toBe("function");
   });
 
   it("configures the scheduled update daily", async () => {

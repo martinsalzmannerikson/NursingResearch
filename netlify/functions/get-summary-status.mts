@@ -4,7 +4,9 @@ import { getJob } from "./_shared/brief-storage.js";
 
 export default async (request: Request) => {
   if (request.method !== "GET") return jsonResponse({ error: "Method not allowed" }, { status: 405 });
-  const jobId = new URL(request.url).searchParams.get("jobId") || "";
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get("jobId") || "";
+  const includeDebug = url.searchParams.get("debug") === "1";
   if (!jobId) return jsonResponse({ error: "jobId is required" }, { status: 400 });
 
   const job = await getJob(jobId);
@@ -30,6 +32,7 @@ export default async (request: Request) => {
     errors: job.errors,
     modelUsed: job.modelUsed ?? null,
     fallbackReason: job.fallbackReason ?? null,
+    ...(includeDebug ? { debugSummary: job.debugSummary ?? null } : {}),
     downloadAvailable: (job.status === "completed" || job.status === "completed_with_fallback") && Boolean(job.pdfKey),
     downloadUrl:
       (job.status === "completed" || job.status === "completed_with_fallback") && job.pdfKey

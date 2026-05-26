@@ -1,7 +1,15 @@
 import { getStore } from "@netlify/blobs";
 import { BRIEF_JOB_STORE, BRIEF_PDF_STORE, type ArticleExtraction, type BriefArticleInput, type SourceCoverage } from "./brief-utils.js";
 
-export type BriefJobStatus = "queued" | "running" | "completed" | "completed_with_fallback" | "failed" | "failed_model_unavailable";
+export type BriefJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_fallback"
+  | "failed"
+  | "failed_model_unavailable"
+  | "failed_empty_model_response"
+  | "failed_no_usable_article_text";
 
 export type BriefProgressStep =
   | "queued"
@@ -32,8 +40,35 @@ export type BriefJob = {
   rawModelResponse?: string;
   modelUsed?: string;
   fallbackReason?: string;
+  debugSummary?: BriefDebugSummary;
   pdfKey?: string;
   resultKey?: string;
+};
+
+export type BriefDebugSummary = {
+  modelUsed?: string | null;
+  fallbackModels?: string[];
+  inputArticleCount?: number;
+  promptCharLength?: number;
+  articleInputCharLength?: number;
+  openRouterStatus?: number | null;
+  openRouterFinishReason?: string | null;
+  openRouterChoiceCount?: number;
+  openRouterContentLength?: number;
+  openRouterEmptyContent?: boolean;
+  markdownSectionLengths?: Record<string, number>;
+  pdfRenderSectionLengths?: Record<string, number>;
+  pdfRenderCounts?: {
+    titleExists: boolean;
+    synthesisLength: number;
+    keyFindingsCount: number;
+    methodologicalBasisLength: number;
+    implicationsCount: number;
+    cautionsCount: number;
+    articleSourceNotesCount: number;
+  };
+  failurePoint?: string;
+  modelPreview?: string;
 };
 
 export function jobStore() {

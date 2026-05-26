@@ -56,6 +56,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/openrouter-health"
+  to = "/.netlify/functions/openrouter-health"
+  status = 200
+
+[[redirects]]
+  from = "/api/brief-debug"
+  to = "/.netlify/functions/brief-debug"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

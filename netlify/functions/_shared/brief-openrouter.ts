@@ -1,10 +1,19 @@
 import { getEnv } from "./env.js";
 import { cleanBriefText, stripMarkupTags, type ArticleExtraction, type BriefArticleInput } from "./brief-utils.js";
+import type { BriefDebugSummary } from "./brief-storage.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_OPENROUTER_TIMEOUT_MS = 30_000;
 const MODEL_UNAVAILABLE_MESSAGE =
   "AI synthesis could not be generated. The selected OpenRouter model was unavailable or blocked by privacy/data policy settings. Try another model or adjust OpenRouter privacy settings.";
+const REQUIRED_MARKDOWN_SECTIONS = [
+  "Synthesis in brief",
+  "Main findings across the selected articles",
+  "Methodological basis",
+  "Implications for nursing research",
+  "Cautions",
+  "Article source notes"
+];
 
 export type SummaryResult = {
   markdown: string;
@@ -13,17 +22,37 @@ export type SummaryResult = {
   fallback: boolean;
   fallbackReason?: string;
   errorSummary?: string[];
+  debugSummary: BriefDebugSummary;
+};
+
+export type OpenRouterBriefDiagnostics = {
+  debugSummary: BriefDebugSummary;
+  markdownSectionLengths: Record<string, number>;
 };
 
 export class OpenRouterModelUnavailableError extends Error {
   friendlyMessage: string;
   details: string;
+  debugSummary?: BriefDebugSummary;
 
-  constructor(friendlyMessage = MODEL_UNAVAILABLE_MESSAGE, details = "") {
+  constructor(friendlyMessage = MODEL_UNAVAILABLE_MESSAGE, details = "", debugSummary?: BriefDebugSummary) {
     super(friendlyMessage);
     this.name = "OpenRouterModelUnavailableError";
     this.friendlyMessage = friendlyMessage;
     this.details = details;
+    this.debugSummary = debugSummary;
+  }
+}
+
+export class EmptyModelResponseError extends Error {
+  friendlyMessage: string;
+  debugSummary?: BriefDebugSummary;
+
+  constructor(message = "The selected OpenRouter model returned an empty response.", debugSummary?: BriefDebugSummary) {
+    super(message);
+    this.name = "EmptyModelResponseError";
+    this.friendlyMessage = message;
+    this.debugSummary = debugSummary;
   }
 }
 
@@ -49,6 +78,13 @@ function parseFallbackModels() {
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item && item !== "undefined" && item !== "null");
+}
+
+export function configuredOpenRouterModels() {
+  return {
+    model: process.env.OPENROUTER_MODEL?.trim() || "",
+    fallbackModels: parseFallbackModels()
+  };
 }
 
 function sourceBasis(extraction: ArticleExtraction) {
@@ -82,8 +118,24 @@ function compactArticleEvidence(article: BriefArticleInput, extraction: ArticleE
   };
 }
 
+function articleEvidenceJson(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
+  return articles.map((article, index) => compactArticleEvidence(article, extractions[index]));
+}
+
+function evidenceDiagnostics(evidence: ReturnType<typeof articleEvidenceJson>) {
+  return evidence.map((article) => ({
+    titleLength: article.title.length,
+    abstractLength: article.abstractText.length,
+    methodTextLength: article.methodText.length,
+    findingsTextLength: article.findingsText.length,
+    conclusionTextLength: article.conclusionText.length,
+    sourceBasis: article.sourceBasis,
+    sectionsUsed: article.sectionsUsed
+  }));
+}
+
 export function buildOpenRouterMessages(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
-  const evidence = articles.map((article, index) => compactArticleEvidence(article, extractions[index]));
+  const evidence = articleEvidenceJson(articles, extractions);
   return [
     {
       role: "system",
@@ -94,6 +146,8 @@ export function buildOpenRouterMessages(articles: BriefArticleInput[], extractio
       role: "user",
       content: [
         "Create a concise AI Findings Brief from the selected articles below. Synthesize across articles where possible. Do not write a technical report about the workflow. Do not mention OpenRouter. Do not mention fallback. Return simple Markdown only.",
+        "Return a complete Markdown brief. Do not leave any section blank. If evidence is limited, write a cautious sentence explaining the limitation rather than omitting the section.",
+        "Even when only abstracts are available, provide a cautious synthesis based on the abstracts, clearly marking this limitation.",
         "",
         "Use exactly these headings:",
         "# AI Findings Brief",
@@ -123,6 +177,29 @@ export function buildOpenRouterMessages(articles: BriefArticleInput[], extractio
       ].join("\n")
     }
   ];
+}
+
+export function createOpenRouterRequestBody(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
+  const { model, fallbackModels } = configuredOpenRouterModels();
+  const messages = buildOpenRouterMessages(articles, extractions);
+  const body: Record<string, unknown> = {
+    messages,
+    temperature: 0.2,
+    max_tokens: 1800
+  };
+  if (fallbackModels.length) body.models = [model, ...fallbackModels];
+  else body.model = model;
+  const evidence = articleEvidenceJson(articles, extractions);
+  const promptCharLength = messages.reduce((total, message) => total + message.content.length, 0);
+  const articleInputCharLength = JSON.stringify(evidence).length;
+  return {
+    body,
+    model,
+    fallbackModels,
+    promptCharLength,
+    articleInputCharLength,
+    articleDiagnostics: evidenceDiagnostics(evidence)
+  };
 }
 
 function friendlyOpenRouterMessage(error: unknown) {
@@ -191,21 +268,28 @@ function normalizeMarkdownHeadings(markdown: string) {
     .trim();
 }
 
-function validateMarkdown(markdown: string) {
-  if (!markdown.trim()) throw new Error("OpenRouter returned an empty response.");
+export function markdownSectionLengths(markdown: string) {
+  const lengths: Record<string, number> = {};
+  let current = "unsectioned";
+  for (const rawLine of sanitizeMarkdown(markdown).split(/\n+/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    if (heading) {
+      current = heading[1].trim();
+      lengths[current] ??= 0;
+      continue;
+    }
+    lengths[current] = (lengths[current] ?? 0) + line.length;
+  }
+  return lengths;
+}
+
+function validateMarkdown(markdown: string, debugSummary?: BriefDebugSummary) {
+  if (!markdown.trim()) throw new EmptyModelResponseError("The selected OpenRouter model returned an empty response.", debugSummary);
   if (/openrouter|provider returned|guardrail|data policy|no endpoints available/i.test(markdown)) {
     throw new Error("OpenRouter response contained provider status text instead of a synthesis.");
   }
-  const required = [
-    "## Synthesis in brief",
-    "## Main findings across the selected articles",
-    "## Methodological basis",
-    "## Implications for nursing research",
-    "## Cautions",
-    "## Article source notes"
-  ];
-  const missing = required.filter((heading) => !markdown.toLowerCase().includes(heading.toLowerCase()));
-  if (missing.length) throw new Error(`OpenRouter response was missing required Markdown heading(s): ${missing.join(", ")}`);
 }
 
 function deterministicFallbackMarkdown(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
@@ -276,7 +360,19 @@ async function callOpenRouter(
     });
     const text = await response.text();
     if (!response.ok) throw new OpenRouterRequestError(response.status, text, primaryModel);
-    return JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }>; model?: string };
+    const parsed = JSON.parse(text) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; model?: string };
+    const content = parsed.choices?.[0]?.message?.content || "";
+    const finishReason = parsed.choices?.[0]?.finish_reason || null;
+    const responseDiagnostics = {
+      openRouterStatus: response.status,
+      openRouterFinishReason: finishReason,
+      openRouterChoiceCount: parsed.choices?.length ?? 0,
+      openRouterContentLength: content.length,
+      openRouterEmptyContent: content.trim().length === 0,
+      modelPreview: safePreview(content, 300)
+    };
+    console.log("OpenRouter response diagnostics:", responseDiagnostics);
+    return { ...parsed, diagnostics: responseDiagnostics };
   } catch (error) {
     if ((error as Error).name === "AbortError") {
       throw new Error(`OpenRouter request timed out after ${timeoutMs} ms for model ${primaryModel}.`);
@@ -287,51 +383,95 @@ async function callOpenRouter(
   }
 }
 
+function safePreview(value: string, max = 300) {
+  return cleanBriefText(value, max);
+}
+
 export async function summarizeWithOpenRouter(
   articles: BriefArticleInput[],
   extractions: ArticleExtraction[],
-  onProgress?: (message: string) => Promise<void> | void
+  onProgress?: (message: string) => Promise<void> | void,
+  options: { jobId?: string } = {}
 ): Promise<SummaryResult> {
   const apiKey = getEnv("OPENROUTER_API_KEY");
-  const model = process.env.OPENROUTER_MODEL?.trim();
+  const { model } = configuredOpenRouterModels();
   if (!apiKey || !model) {
     const reason = friendlyOpenRouterMessage(new Error(!apiKey ? "OPENROUTER_API_KEY is not set." : "OPENROUTER_MODEL is not set."));
     await onProgress?.(reason);
-    throw new OpenRouterModelUnavailableError(MODEL_UNAVAILABLE_MESSAGE, reason);
+    throw new OpenRouterModelUnavailableError(MODEL_UNAVAILABLE_MESSAGE, reason, {
+      modelUsed: model || null,
+      inputArticleCount: articles.length,
+      failurePoint: !apiKey ? "before_openrouter_missing_api_key" : "before_openrouter_missing_model"
+    });
   }
 
-  const fallbackModels = parseFallbackModels();
   const siteUrl = getEnv("OPENROUTER_SITE_URL");
   const appTitle = getEnv("OPENROUTER_APP_TITLE", "Nursing Research Monitor");
   const timeoutMs = Number(getEnv("OPENROUTER_REQUEST_TIMEOUT_MS", String(DEFAULT_OPENROUTER_TIMEOUT_MS))) || DEFAULT_OPENROUTER_TIMEOUT_MS;
-  const messages = buildOpenRouterMessages(articles, extractions);
-  const body: Record<string, unknown> = {
-    messages,
-    temperature: 0.2,
-    max_tokens: 1800
+  const { body, fallbackModels, promptCharLength, articleInputCharLength, articleDiagnostics } = createOpenRouterRequestBody(
+    articles,
+    extractions
+  );
+  const debugBase: BriefDebugSummary = {
+    modelUsed: model,
+    fallbackModels,
+    inputArticleCount: articles.length,
+    promptCharLength,
+    articleInputCharLength
   };
-  if (fallbackModels.length) body.models = [model, ...fallbackModels];
-  else body.model = model;
+  console.log("OpenRouter preflight diagnostics:", {
+    jobId: options?.jobId ?? null,
+    selectedArticleCount: articles.length,
+    model,
+    fallbackModels,
+    articles: articleDiagnostics,
+    promptCharLength,
+    articleInputCharLength
+  });
 
   try {
     await onProgress?.(`Sending compact evidence package to ${model}.`);
     const data = await callOpenRouter(body, apiKey, siteUrl, appTitle, timeoutMs, model);
     const raw = data.choices?.[0]?.message?.content || "";
     const markdown = sanitizeMarkdown(raw);
-    validateMarkdown(markdown);
+    const debugSummary: BriefDebugSummary = {
+      ...debugBase,
+      modelUsed: data.model || model,
+      ...data.diagnostics,
+      markdownSectionLengths: markdownSectionLengths(markdown)
+    };
+    const emptySections = REQUIRED_MARKDOWN_SECTIONS.filter((name) => (debugSummary.markdownSectionLengths?.[name] ?? 0) === 0);
+    console.log("Markdown parse diagnostics:", {
+      jobId: options?.jobId ?? null,
+      parsedSectionNames: Object.keys(debugSummary.markdownSectionLengths ?? {}),
+      markdownSectionLengths: debugSummary.markdownSectionLengths,
+      requiredSectionEmpty: emptySections
+    });
+    validateMarkdown(markdown, debugSummary);
     return {
       markdown,
       raw,
       model: data.model || model,
       fallback: false,
-      errorSummary: []
+      errorSummary: [],
+      debugSummary
     };
   } catch (error) {
     console.error("OpenRouter synthesis failed:", error);
     const reason = friendlyOpenRouterMessage(error);
     await onProgress?.("AI synthesis could not be generated.");
+    if (error instanceof EmptyModelResponseError) throw error;
+    const failureDebug: BriefDebugSummary = {
+      ...debugBase,
+      failurePoint: "openrouter_request_failed"
+    };
+    if (error instanceof OpenRouterRequestError) {
+      failureDebug.openRouterStatus = error.status;
+      failureDebug.openRouterContentLength = error.body.length;
+      failureDebug.modelPreview = safePreview(error.body, 300);
+    }
     if (!allowDeterministicFallbackPdf()) {
-      throw new OpenRouterModelUnavailableError(MODEL_UNAVAILABLE_MESSAGE, reason);
+      throw new OpenRouterModelUnavailableError(MODEL_UNAVAILABLE_MESSAGE, reason, failureDebug);
     }
     const markdown = deterministicFallbackMarkdown(articles, extractions);
     return {
@@ -340,7 +480,13 @@ export async function summarizeWithOpenRouter(
       model: "deterministic-fallback",
       fallback: true,
       fallbackReason: reason,
-      errorSummary: [reason]
+      errorSummary: [reason],
+      debugSummary: {
+        ...debugBase,
+        modelUsed: "deterministic-fallback",
+        markdownSectionLengths: markdownSectionLengths(markdown),
+        failurePoint: "openrouter_unavailable_deterministic_fallback"
+      }
     };
   }
 }

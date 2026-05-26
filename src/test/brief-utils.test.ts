@@ -9,8 +9,18 @@ import {
   type ArticleExtraction
 } from "../../netlify/functions/_shared/brief-utils";
 import { chooseOpenAccessSource } from "../../netlify/functions/_shared/brief-openalex";
-import { OpenRouterModelUnavailableError, buildOpenRouterMessages, summarizeWithOpenRouter } from "../../netlify/functions/_shared/brief-openrouter";
-import { generateFindingsBriefPdf, parseBriefMarkdown } from "../../netlify/functions/_shared/brief-pdf";
+import {
+  EmptyModelResponseError,
+  OpenRouterModelUnavailableError,
+  buildOpenRouterMessages,
+  summarizeWithOpenRouter
+} from "../../netlify/functions/_shared/brief-openrouter";
+import { buildBriefRenderModel, generateFindingsBriefPdf, parseBriefMarkdown } from "../../netlify/functions/_shared/brief-pdf";
+import {
+  NoUsableArticleTextError,
+  failureStateForBriefError,
+  hasUsableArticleText
+} from "../../netlify/functions/process-summary-background.mts";
 
 function decodePdfText(pdf: ArrayBuffer) {
   const raw = new TextDecoder("latin1").decode(pdf);
@@ -216,6 +226,64 @@ The records include abstract-only and OA full-text section material.
     }
   });
 
+  it("renders variant model headings into the PDF", () => {
+    const variantMarkdown = `AI Findings Brief
+
+Executive synthesis
+The selected records support a cautious synthesis based on supplied abstracts and extracted sections.
+
+Findings
+- Continuity is a recurring concern.
+
+Methods represented
+The evidence includes abstract-only and OA-section records.
+
+Implications
+- Improve reporting quality.
+
+Cautions and limitations
+- Some evidence is abstract-only.
+
+Article notes
+- Continuity study; 2026; abstract only; Abstract.`;
+    const pdf = generateFindingsBriefPdf({
+      articles: [{ title: "Continuity study", year: 2026 }],
+      extractions: [sampleExtraction()],
+      markdown: variantMarkdown
+    });
+    const readableText = decodePdfText(pdf);
+    expect(readableText).toContain("Synthesis in brief");
+    expect(readableText).toContain("The selected records support a cautious synthesis");
+    expect(readableText).toContain("Main findings across the selected articles");
+  });
+
+  it("renders raw non-empty Markdown when no recognized headings are present", () => {
+    const rawMarkdown =
+      "This is a substantive model response without the requested headings. It still contains enough synthesis text to render under a generic AI-generated synthesis heading rather than being dropped.";
+    const model = buildBriefRenderModel(rawMarkdown);
+    expect(model.mode).toBe("raw");
+    expect(model.synthesis.length).toBeGreaterThan(100);
+    const pdf = generateFindingsBriefPdf({
+      articles: [{ title: "Continuity study", year: 2026 }],
+      extractions: [sampleExtraction()],
+      markdown: rawMarkdown
+    });
+    const readableText = decodePdfText(pdf);
+    expect(readableText).toContain("AI-generated synthesis");
+    expect(readableText).toContain("substantive model response");
+  });
+
+  it("does not drop a very short non-empty model response", () => {
+    const model = buildBriefRenderModel("Brief but usable.");
+    expect(model.mode).toBe("short");
+    const pdf = generateFindingsBriefPdf({
+      articles: [{ title: "Continuity study", year: 2026 }],
+      extractions: [sampleExtraction()],
+      markdown: "Brief but usable."
+    });
+    expect(decodePdfText(pdf)).toContain("The model returned a very short response");
+  });
+
   it("uses OpenRouter models array only when fallback models are explicitly configured", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
@@ -270,6 +338,41 @@ The records include abstract-only and OA full-text section material.
     }
   });
 
+  it("fails empty model responses with a specific error", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      process.env.OPENROUTER_MODEL = "test/model";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          text: async () => JSON.stringify({ choices: [{ message: { content: "   " }, finish_reason: "stop" }], model: "test/model" })
+        })
+      );
+      await expect(summarizeWithOpenRouter([{ title: "Continuity study", year: 2026 }], [sampleExtraction()])).rejects.toBeInstanceOf(
+        EmptyModelResponseError
+      );
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
+    }
+  });
+
+  it("detects selected articles with no usable article text before OpenRouter", () => {
+    const emptyExtraction = sampleExtraction({
+      methodsText: "",
+      findingsText: "",
+      conclusionsText: "",
+      abstract: ""
+    });
+    expect(hasUsableArticleText([emptyExtraction])).toBe(false);
+    const failure = failureStateForBriefError(new NoUsableArticleTextError({ failurePoint: "before_openrouter_no_usable_article_text" }));
+    expect(failure.status).toBe("failed_no_usable_article_text");
+    expect(failure.message).toMatch(/No usable article text/i);
+  });
+
   it("allows deterministic fallback PDF only when explicitly enabled", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
@@ -301,6 +404,12 @@ The records include abstract-only and OA full-text section material.
     const blocks = parseBriefMarkdown(goodMarkdown);
     expect(blocks.some((block) => block.type === "h2" && block.text === "Synthesis in brief")).toBe(true);
     expect(blocks.some((block) => block.type === "li" && block.text.includes("Continuity"))).toBe(true);
+  });
+
+  it("marks empty render models so empty synthesis PDFs are blocked upstream", () => {
+    const model = buildBriefRenderModel("   ");
+    expect(model.mode).toBe("empty");
+    expect(model.contentLength).toBe(0);
   });
 
   it("generates a light, readable AI Findings Brief PDF from Markdown", () => {
