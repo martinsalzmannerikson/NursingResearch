@@ -2,6 +2,7 @@ import { getEnv } from "./env.js";
 import { capText, parseOpenRouterJson, type ArticleExtraction, type BriefArticleInput } from "./brief-utils.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_OPENROUTER_TIMEOUT_MS = 45_000;
 const FREE_MODEL_FALLBACKS = [
   "openai/gpt-oss-20b:free",
   "qwen/qwen3-next-80b-a3b-instruct:free",
@@ -45,14 +46,23 @@ function buildMessages(articles: BriefArticleInput[], extractions: ArticleExtrac
       content: JSON.stringify(
         {
           task:
-            "Create an AI-assisted findings brief. Include executiveSummary, keyFindings, methodologicalProfile, implicationsForNursingResearch, limitationsOfEvidenceBase, articleNotes, and sourceStatusSummary.",
+            "Create an AI-assisted findings brief. Include executiveSummary, keyFindings, methodologicalProfile, implicationsForNursingResearch, limitationsOfEvidenceBase, articleNotes, and sourceStatusSummary. Return articleNotes in the same order as the supplied evidence, with cautious designMethods, findingsUsed, and evidenceWeight fields.",
           outputShape: {
             executiveSummary: "string",
             keyFindings: ["string"],
             methodologicalProfile: ["string"],
             implicationsForNursingResearch: ["string"],
             limitationsOfEvidenceBase: ["string"],
-            articleNotes: [{ title: "string", note: "string", sourceStatus: "string" }],
+            articleNotes: [
+              {
+                title: "string",
+                note: "string",
+                sourceStatus: "string",
+                designMethods: "string",
+                findingsUsed: "string",
+                evidenceWeight: "Low | Med | High"
+              }
+            ],
             sourceStatusSummary: ["string"]
           },
           evidence
@@ -64,7 +74,13 @@ function buildMessages(articles: BriefArticleInput[], extractions: ArticleExtrac
   ];
 }
 
-async function callOpenRouter(body: Record<string, unknown>, apiKey: string, siteUrl: string, appTitle: string) {
+async function callOpenRouter(
+  body: Record<string, unknown>,
+  apiKey: string,
+  siteUrl: string,
+  appTitle: string,
+  timeoutMs: number
+) {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
@@ -73,14 +89,26 @@ async function callOpenRouter(body: Record<string, unknown>, apiKey: string, sit
   if (siteUrl) headers["HTTP-Referer"] = siteUrl;
 
   console.log("Using OpenRouter model:", body.model);
-  const response = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body)
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`OpenRouter ${response.status}: ${text}`);
-  return JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`OpenRouter ${response.status}: ${text}`);
+    return JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
+  } catch (error) {
+    if ((error as Error).name === "AbortError") {
+      throw new Error(`OpenRouter request timed out after ${timeoutMs} ms for model ${String(body.model)}.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function modelCandidates(primaryModel: string) {
@@ -94,12 +122,16 @@ function modelCandidates(primaryModel: string) {
 }
 
 function isRetryableModelError(error: unknown) {
-  return /no endpoints?|guardrail|data policy|privacy|model not found|provider returned error|temporarily|rate.?limit|upstream|404|429|503/i.test(
+  return /no endpoints?|guardrail|data policy|privacy|model not found|provider returned error|temporarily|rate.?limit|upstream|timed out|timeout|abort|404|429|503/i.test(
     (error as Error).message
   );
 }
 
-export async function summarizeWithOpenRouter(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
+export async function summarizeWithOpenRouter(
+  articles: BriefArticleInput[],
+  extractions: ArticleExtraction[],
+  onProgress?: (message: string) => Promise<void> | void
+) {
   const apiKey = getEnv("OPENROUTER_API_KEY");
   const model = process.env.OPENROUTER_MODEL?.trim();
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set.");
@@ -107,6 +139,7 @@ export async function summarizeWithOpenRouter(articles: BriefArticleInput[], ext
 
   const siteUrl = getEnv("OPENROUTER_SITE_URL");
   const appTitle = getEnv("OPENROUTER_APP_TITLE", "Nursing Research Monitor");
+  const timeoutMs = Number(getEnv("OPENROUTER_REQUEST_TIMEOUT_MS", String(DEFAULT_OPENROUTER_TIMEOUT_MS))) || DEFAULT_OPENROUTER_TIMEOUT_MS;
 
   let data;
   let usedModel = model;
@@ -125,16 +158,25 @@ export async function summarizeWithOpenRouter(articles: BriefArticleInput[], ext
     };
     try {
       usedModel = candidateModel;
+      await onProgress?.(`Trying OpenRouter model ${candidateModel}.`);
       try {
-        data = await callOpenRouter({ ...baseBody, response_format: { type: "json_object" } }, apiKey, siteUrl, appTitle);
+        data = await callOpenRouter(
+          { ...baseBody, response_format: { type: "json_object" } },
+          apiKey,
+          siteUrl,
+          appTitle,
+          timeoutMs
+        );
       } catch (error) {
         if (!/response_format|json_object|schema|unsupported|400/i.test((error as Error).message)) throw error;
-        data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle);
+        await onProgress?.(`Retrying ${candidateModel} without JSON response_format.`);
+        data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle, timeoutMs);
       }
       break;
     } catch (error) {
       modelErrors.push(`${candidateModel}: ${(error as Error).message}`);
       if (!isRetryableModelError(error)) throw error;
+      await onProgress?.(`OpenRouter model ${candidateModel} was unavailable; trying the next free model.`);
     }
   }
 

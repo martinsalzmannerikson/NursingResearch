@@ -27,7 +27,9 @@ async function processJob(jobId: string) {
 
     await updateProgress(jobId, "extracting_sections", "Extracted allowed source sections or abstract fallbacks.", extractions.length, job.articles.length);
     await updateProgress(jobId, "summarising", "Sending capped evidence package to OpenRouter.", extractions.length, job.articles.length);
-    const summary = await summarizeWithOpenRouter(job.articles, extractions);
+    const summary = await summarizeWithOpenRouter(job.articles, extractions, async (message) => {
+      await updateProgress(jobId, "summarising", message, extractions.length, job.articles.length);
+    });
 
     await updateProgress(jobId, "generating_pdf", "Generating Nursing Research Monitor PDF brief.", extractions.length, job.articles.length);
     const pdf = generateFindingsBriefPdf({
@@ -57,6 +59,7 @@ async function processJob(jobId: string) {
     completed.sourceStatusSummary = sourceCoverage(extractions);
     completed.summary = summary.parsed;
     completed.rawModelResponse = summary.raw;
+    completed.modelUsed = summary.model;
     completed.pdfKey = pdfKey;
     await saveJob(completed);
   } catch (error) {

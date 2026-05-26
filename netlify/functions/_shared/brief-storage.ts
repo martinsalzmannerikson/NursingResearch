@@ -30,6 +30,7 @@ export type BriefJob = {
   sourceStatusSummary?: SourceCoverage;
   summary?: unknown;
   rawModelResponse?: string;
+  modelUsed?: string;
   pdfKey?: string;
   resultKey?: string;
 };

@@ -107,6 +107,7 @@ export type BriefJobStatus = {
     isRetracted: boolean;
   }>;
   errors: string[];
+  modelUsed?: string | null;
   downloadAvailable: boolean;
   downloadUrl: string | null;
 };

@@ -169,6 +169,35 @@ describe("AI findings brief utilities", () => {
     }
   });
 
+  it("continues to the next free model when an OpenRouter request times out", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    const previousTimeout = process.env.OPENROUTER_REQUEST_TIMEOUT_MS;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      process.env.OPENROUTER_MODEL = "openai/gpt-oss-20b:free";
+      process.env.OPENROUTER_REQUEST_TIMEOUT_MS = "5";
+      const abortError = Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+      const fetchMock = vi
+        .fn()
+        .mockRejectedValueOnce(abortError)
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
+            })
+        });
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await summarizeWithOpenRouter([], []);
+      expect(result.model).toBe("qwen/qwen3-next-80b-a3b-instruct:free");
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
+      process.env.OPENROUTER_REQUEST_TIMEOUT_MS = previousTimeout;
+    }
+  });
+
   it("generates a PDF document", () => {
     const extraction = {
       doi: "10.1/test",
@@ -200,7 +229,9 @@ describe("AI findings brief utilities", () => {
         articleNotes: []
       }
     });
-    expect(new TextDecoder().decode(pdf.slice(0, 8))).toMatch(/^%PDF-1\./);
+    const pdfText = new TextDecoder().decode(pdf);
+    expect(pdfText.slice(0, 8)).toMatch(/^%PDF-1\./);
+    expect(pdfText).toContain("/Count 4");
     expect(pdf.byteLength).toBeGreaterThan(1000);
   });
 });

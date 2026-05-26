@@ -87,6 +87,7 @@ export default function App({ initialData }: AppProps) {
   const [briefError, setBriefError] = useState("");
   const [briefStarting, setBriefStarting] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const downloadedBriefRef = useRef<string | null>(null);
 
   const items = useMemo(() => data?.items ?? [], [data]);
   const activeItems = useMemo(
@@ -166,6 +167,7 @@ export default function App({ initialData }: AppProps) {
     setBriefError("");
     setBriefStatus(null);
     setBriefStarting(true);
+    downloadedBriefRef.current = null;
     try {
       const start = await startSummaryJob(selectedItems);
       setBriefStatus({
@@ -194,6 +196,23 @@ export default function App({ initialData }: AppProps) {
     }, 2500);
     return () => window.clearInterval(timer);
   }, [briefStatus?.jobId, briefStatus?.status]);
+
+  useEffect(() => {
+    if (
+      briefStatus?.status !== "completed" ||
+      !briefStatus.downloadUrl ||
+      downloadedBriefRef.current === briefStatus.jobId
+    ) {
+      return;
+    }
+    downloadedBriefRef.current = briefStatus.jobId;
+    const link = document.createElement("a");
+    link.href = briefStatus.downloadUrl;
+    link.download = `nursing-research-monitor-findings-brief-${briefStatus.jobId}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }, [briefStatus?.downloadUrl, briefStatus?.jobId, briefStatus?.status]);
 
   return (
     <main className="crt-shell">
@@ -496,9 +515,10 @@ function BriefJobPanel({ status }: { status: BriefJobStatus }) {
         </span>
       ) : null}
       {status.errors.length ? <span className="brief-error">{status.errors.join(" ")}</span> : null}
+      {status.modelUsed ? <span>Model: {status.modelUsed}</span> : null}
       {status.downloadAvailable && status.downloadUrl ? (
         <a className="download-brief" href={status.downloadUrl}>
-          Download PDF
+          Download PDF again
         </a>
       ) : null}
     </div>

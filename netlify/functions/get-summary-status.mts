@@ -28,6 +28,7 @@ export default async (request: Request) => {
       isRetracted: source.isRetracted
     })),
     errors: job.errors,
+    modelUsed: job.modelUsed ?? null,
     downloadAvailable: job.status === "completed" && Boolean(job.pdfKey),
     downloadUrl: job.status === "completed" && job.pdfKey ? `/api/download-summary-pdf?jobId=${encodeURIComponent(jobId)}` : null
   });
