@@ -141,7 +141,8 @@ export async function summarizeWithOpenRouter(
   const appTitle = getEnv("OPENROUTER_APP_TITLE", "Nursing Research Monitor");
   const timeoutMs = Number(getEnv("OPENROUTER_REQUEST_TIMEOUT_MS", String(DEFAULT_OPENROUTER_TIMEOUT_MS))) || DEFAULT_OPENROUTER_TIMEOUT_MS;
 
-  let data;
+  let parsed;
+  let raw = "";
   let usedModel = model;
   const modelErrors: string[] = [];
 
@@ -160,17 +161,28 @@ export async function summarizeWithOpenRouter(
       usedModel = candidateModel;
       await onProgress?.(`Trying OpenRouter model ${candidateModel}.`);
       try {
-        data = await callOpenRouter(
+        const data = await callOpenRouter(
           { ...baseBody, response_format: { type: "json_object" } },
           apiKey,
           siteUrl,
           appTitle,
           timeoutMs
         );
+        raw = data.choices?.[0]?.message?.content || "";
       } catch (error) {
         if (!/response_format|json_object|schema|unsupported|400/i.test((error as Error).message)) throw error;
         await onProgress?.(`Retrying ${candidateModel} without JSON response_format.`);
-        data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle, timeoutMs);
+        const data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle, timeoutMs);
+        raw = data.choices?.[0]?.message?.content || "";
+      }
+      if (!raw) throw new Error("OpenRouter returned an empty response.");
+      try {
+        parsed = parseOpenRouterJson(raw);
+      } catch (error) {
+        modelErrors.push(`${candidateModel}: OpenRouter response JSON parsing failed: ${(error as Error).message}`);
+        await onProgress?.(`OpenRouter model ${candidateModel} returned invalid JSON; trying the next free model.`);
+        raw = "";
+        continue;
       }
       break;
     } catch (error) {
@@ -180,23 +192,13 @@ export async function summarizeWithOpenRouter(
     }
   }
 
-  if (!data) {
+  if (!parsed) {
     throw new Error(`No OpenRouter free model endpoint was available. Tried: ${modelErrors.join(" | ")}`);
   }
 
-  const content = data.choices?.[0]?.message?.content || "";
-  if (!content) throw new Error("OpenRouter returned an empty response.");
-  let parsed;
-  try {
-    parsed = parseOpenRouterJson(content);
-  } catch (error) {
-    throw Object.assign(new Error(`OpenRouter response JSON parsing failed: ${(error as Error).message}`), {
-      rawModelResponse: content
-    });
-  }
   return {
     parsed,
-    raw: content,
+    raw,
     model: usedModel
   };
 }

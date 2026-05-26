@@ -25,7 +25,7 @@ const OPENALEX_SELECT = [
   "open_access",
   "abstract_inverted_index",
   "has_content",
-  "content_url",
+  "content_urls",
   "authorships",
   "biblio"
 ].join(",");
@@ -69,10 +69,15 @@ export function chooseOpenAccessSource(work: Record<string, unknown>): OaChoice 
   const best = locationUrl(work.best_oa_location as Record<string, unknown> | null);
   if (best) return best;
 
-  const contentUrl = String(work.content_url || "");
+  const contentUrls = work.content_urls as Record<string, unknown> | null | undefined;
   const hasContent = work.has_content as Record<string, unknown> | undefined;
-  if (contentUrl && (hasContent?.pdf || hasContent?.grobid_xml)) {
-    return { url: contentUrl, kind: hasContent.grobid_xml ? "content" : "pdf", license: "", status: "oa_fulltext" };
+  const pdfContentUrl = String(contentUrls?.pdf || contentUrls?.pdf_url || "");
+  const xmlContentUrl = String(contentUrls?.grobid_xml || contentUrls?.xml || contentUrls?.grobid_xml_url || "");
+  if (pdfContentUrl && hasContent?.pdf) {
+    return { url: pdfContentUrl, kind: "pdf", license: "", status: "oa_fulltext" };
+  }
+  if (xmlContentUrl && hasContent?.grobid_xml) {
+    return { url: xmlContentUrl, kind: "content", license: "", status: "oa_fulltext" };
   }
 
   const primary = locationUrl(work.primary_location as Record<string, unknown> | null);
@@ -125,6 +130,11 @@ function abstractFrom(article: BriefArticleInput, work?: Record<string, unknown>
   );
 }
 
+function usableCachedExtraction(cached: ArticleExtraction | null): cached is ArticleExtraction {
+  if (!cached?.doi) return false;
+  return !cached.extractionWarnings.some((warning) => /content_url is not a valid select field|Invalid query parameters/i.test(warning));
+}
+
 function fallbackExtraction(
   article: BriefArticleInput,
   doi: string,
@@ -168,7 +178,7 @@ export async function resolveArticleEvidence(article: BriefArticleInput): Promis
   const cache = getStore({ name: BRIEF_CACHE_STORE, consistency: "strong" });
   const cacheKey = doiCacheKey(doi);
   const cached = (await cache.get(cacheKey, { type: "json" }).catch(() => null)) as ArticleExtraction | null;
-  if (cached?.doi) return cached;
+  if (usableCachedExtraction(cached)) return cached;
 
   let work: Record<string, unknown>;
   try {

@@ -32,6 +32,14 @@ describe("AI findings brief utilities", () => {
     expect(source).toMatchObject({ url: "https://example.test/article.pdf", kind: "pdf", status: "oa_fulltext" });
   });
 
+  it("uses OpenAlex content_urls when content availability is flagged", () => {
+    const source = chooseOpenAccessSource({
+      has_content: { grobid_xml: true },
+      content_urls: { grobid_xml: "https://example.test/article.xml" }
+    });
+    expect(source).toMatchObject({ url: "https://example.test/article.xml", kind: "content", status: "oa_fulltext" });
+  });
+
   it("extracts methods, findings, and conclusions with combined-section warning", () => {
     const extracted = extractSections(`
       <h2>Methods</h2><p>Interviews were analysed thematically.</p>
@@ -195,6 +203,37 @@ describe("AI findings brief utilities", () => {
       process.env.OPENROUTER_API_KEY = previousKey;
       process.env.OPENROUTER_MODEL = previousModel;
       process.env.OPENROUTER_REQUEST_TIMEOUT_MS = previousTimeout;
+    }
+  });
+
+  it("continues to the next free model when a model returns invalid JSON", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      process.env.OPENROUTER_MODEL = "openai/gpt-oss-20b:free";
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              choices: [{ message: { content: "{\"executiveSummary\":\"OK\",\"keyFindings\":[\"missing close\"" } }]
+            })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
+            })
+        });
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await summarizeWithOpenRouter([], []);
+      expect(result.model).toBe("qwen/qwen3-next-80b-a3b-instruct:free");
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
     }
   });
 
