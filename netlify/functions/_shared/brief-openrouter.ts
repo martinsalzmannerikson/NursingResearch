@@ -62,6 +62,7 @@ async function callOpenRouter(body: Record<string, unknown>, apiKey: string, sit
   };
   if (siteUrl) headers["HTTP-Referer"] = siteUrl;
 
+  console.log("Using OpenRouter model:", body.model);
   const response = await fetch(OPENROUTER_URL, {
     method: "POST",
     headers,
@@ -74,9 +75,9 @@ async function callOpenRouter(body: Record<string, unknown>, apiKey: string, sit
 
 export async function summarizeWithOpenRouter(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
   const apiKey = getEnv("OPENROUTER_API_KEY");
-  const model = getEnv("OPENROUTER_MODEL");
+  const model = process.env.OPENROUTER_MODEL?.trim();
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set.");
-  if (!model) throw new Error("OPENROUTER_MODEL is not set. Set it in Netlify, for example meta-llama/llama-3.3-70b-instruct:free.");
+  if (!model) throw new Error("OPENROUTER_MODEL is not set. Set it in Netlify environment variables.");
 
   const baseBody = {
     model,

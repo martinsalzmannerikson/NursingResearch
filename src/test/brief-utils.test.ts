@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   extractSections,
   normalizeDoi,
@@ -8,6 +8,7 @@ import {
   type ArticleExtraction
 } from "../../netlify/functions/_shared/brief-utils";
 import { chooseOpenAccessSource } from "../../netlify/functions/_shared/brief-openalex";
+import { summarizeWithOpenRouter } from "../../netlify/functions/_shared/brief-openrouter";
 import { generateFindingsBriefPdf } from "../../netlify/functions/_shared/brief-pdf";
 
 describe("AI findings brief utilities", () => {
@@ -63,6 +64,41 @@ describe("AI findings brief utilities", () => {
     expect(parseOpenRouterJson("```json\n{\"executiveSummary\":\"OK\"}\n```")).toMatchObject({
       executiveSummary: "OK"
     });
+  });
+
+  it("fails clearly when OPENROUTER_MODEL is missing", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      delete process.env.OPENROUTER_MODEL;
+      await expect(summarizeWithOpenRouter([], [])).rejects.toThrow(/OPENROUTER_MODEL is not set/);
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
+    }
+  });
+
+  it("uses process.env.OPENROUTER_MODEL in the server-side OpenRouter request", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      process.env.OPENROUTER_MODEL = "test/model:free";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
+          })
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      await summarizeWithOpenRouter([], []);
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).model).toBe("test/model:free");
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
+    }
   });
 
   it("generates a PDF document", () => {
