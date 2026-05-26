@@ -149,7 +149,7 @@ function friendlyOpenRouterMessage(error: unknown) {
 }
 
 function sanitizeMarkdown(markdown: string) {
-  return stripMarkupTags(markdown.replace(/```[\s\S]*?```/g, " "))
+  const cleaned = stripMarkupTags(markdown.replace(/```[\s\S]*?```/g, " "))
     .replace(/[\u2018\u2019\u201a]/g, "'")
     .replace(/[\u201c\u201d\u201e]/g, '"')
     .replace(/[\u2013\u2014\u2212]/g, "-")
@@ -159,6 +159,34 @@ function sanitizeMarkdown(markdown: string) {
     .replace(/\n\s+/g, "\n")
     .replace(/\s+(#{1,3}\s+)/g, "\n\n$1")
     .replace(/\s+(-\s+)/g, "\n$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return normalizeMarkdownHeadings(cleaned);
+}
+
+function normalizeMarkdownHeadings(markdown: string) {
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      const headingText = trimmed
+        .replace(/^#{1,6}\s*/, "")
+        .replace(/^\d+[.)]\s*/, "")
+        .replace(/:$/, "")
+        .trim()
+        .toLowerCase();
+      if (/^ai findings brief$/.test(headingText)) return "# AI Findings Brief";
+      if (/^synthesis( in brief)?$|^brief synthesis$|^executive synthesis$/.test(headingText)) return "## Synthesis in brief";
+      if (/^(main |key )?findings( across (the )?selected articles)?$/.test(headingText)) {
+        return "## Main findings across the selected articles";
+      }
+      if (/^methodological (basis|profile)$|^methods? basis$/.test(headingText)) return "## Methodological basis";
+      if (/^implications( for nursing research)?$/.test(headingText)) return "## Implications for nursing research";
+      if (/^cautions?$|^limitations?$/.test(headingText)) return "## Cautions";
+      if (/^article (source )?notes?$|^source notes?$/.test(headingText)) return "## Article source notes";
+      return line;
+    })
+    .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

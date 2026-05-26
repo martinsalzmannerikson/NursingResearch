@@ -173,6 +173,49 @@ describe("AI findings brief utilities", () => {
     }
   });
 
+  it("accepts common Markdown heading variants from the model", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      process.env.OPENROUTER_MODEL = "test/model";
+      const variantMarkdown = `AI Findings Brief
+
+1. Brief synthesis
+The selected studies point toward cautious continuity-focused conclusions across the supplied material.
+
+2. Key findings
+- Continuity is visible across the article material.
+- Abstract-only evidence requires caution.
+
+3. Methodological profile
+The records include abstract-only and OA full-text section material.
+
+4. Implications
+- Improve transparent reporting of methods and findings.
+
+5. Limitations
+- Some records are abstract-only.
+
+6. Source notes
+- Continuity study; 2026; abstract only; Abstract.`;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          text: async () => JSON.stringify({ choices: [{ message: { content: variantMarkdown } }], model: "test/model" })
+        })
+      );
+      const result = await summarizeWithOpenRouter([{ title: "Continuity study", year: 2026 }], [sampleExtraction()]);
+      expect(result.markdown).toContain("## Synthesis in brief");
+      expect(result.markdown).toContain("## Main findings across the selected articles");
+      expect(result.fallback).toBe(false);
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
+    }
+  });
+
   it("uses OpenRouter models array only when fallback models are explicitly configured", async () => {
     const previousKey = process.env.OPENROUTER_API_KEY;
     const previousModel = process.env.OPENROUTER_MODEL;
