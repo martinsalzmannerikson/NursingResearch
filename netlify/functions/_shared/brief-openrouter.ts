@@ -4,10 +4,13 @@ import { capText, parseOpenRouterJson, type ArticleExtraction, type BriefArticle
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const FREE_MODEL_FALLBACKS = [
   "openai/gpt-oss-20b:free",
-  "openai/gpt-oss-120b:free",
-  "deepseek/deepseek-v4-flash:free",
   "qwen/qwen3-next-80b-a3b-instruct:free",
-  "meta-llama/llama-3.3-70b-instruct:free"
+  "z-ai/glm-4.5-air:free",
+  "nvidia/nemotron-3-nano-30b-a3b:free",
+  "minimax/minimax-m2.5:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "openai/gpt-oss-120b:free",
+  "deepseek/deepseek-v4-flash:free"
 ];
 
 function articleEvidence(article: BriefArticleInput, extraction: ArticleExtraction) {
@@ -85,13 +88,15 @@ function modelCandidates(primaryModel: string) {
     ...new Set(
       [primaryModel, ...FREE_MODEL_FALLBACKS]
         .map((model) => model.trim())
-        .filter((candidate) => candidate && !/^google\/gemma-4-31b-it(?::free)?$/i.test(candidate))
+        .filter((candidate) => candidate && !/^google\/gemma-4-\d+b.*(?::free)?$/i.test(candidate))
     )
   ];
 }
 
-function isEndpointUnavailable(error: unknown) {
-  return /no endpoints?|guardrail|data policy|privacy|model not found|404/i.test((error as Error).message);
+function isRetryableModelError(error: unknown) {
+  return /no endpoints?|guardrail|data policy|privacy|model not found|provider returned error|temporarily|rate.?limit|upstream|404|429|503/i.test(
+    (error as Error).message
+  );
 }
 
 export async function summarizeWithOpenRouter(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
@@ -129,7 +134,7 @@ export async function summarizeWithOpenRouter(articles: BriefArticleInput[], ext
       break;
     } catch (error) {
       modelErrors.push(`${candidateModel}: ${(error as Error).message}`);
-      if (!isEndpointUnavailable(error)) throw error;
+      if (!isRetryableModelError(error)) throw error;
     }
   }
 

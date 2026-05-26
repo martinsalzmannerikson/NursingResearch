@@ -134,6 +134,41 @@ describe("AI findings brief utilities", () => {
     }
   });
 
+  it("continues to the next free model when a provider is rate limited", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      process.env.OPENROUTER_MODEL = "openai/gpt-oss-20b:free";
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+          text: async () =>
+            JSON.stringify({
+              error: { message: "Provider returned error: temporarily rate-limited upstream." }
+            })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
+            })
+        });
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await summarizeWithOpenRouter([], []);
+      expect(result.model).toBe("qwen/qwen3-next-80b-a3b-instruct:free");
+      expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).model).toBe(
+        "qwen/qwen3-next-80b-a3b-instruct:free"
+      );
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
+    }
+  });
+
   it("generates a PDF document", () => {
     const extraction = {
       doi: "10.1/test",
