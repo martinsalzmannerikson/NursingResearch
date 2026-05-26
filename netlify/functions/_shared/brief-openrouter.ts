@@ -2,6 +2,13 @@ import { getEnv } from "./env.js";
 import { capText, parseOpenRouterJson, type ArticleExtraction, type BriefArticleInput } from "./brief-utils.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const FREE_MODEL_FALLBACKS = [
+  "openai/gpt-oss-20b:free",
+  "openai/gpt-oss-120b:free",
+  "deepseek/deepseek-v4-flash:free",
+  "qwen/qwen3-next-80b-a3b-instruct:free",
+  "meta-llama/llama-3.3-70b-instruct:free"
+];
 
 function articleEvidence(article: BriefArticleInput, extraction: ArticleExtraction) {
   return {
@@ -73,27 +80,61 @@ async function callOpenRouter(body: Record<string, unknown>, apiKey: string, sit
   return JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
 }
 
+function modelCandidates(primaryModel: string) {
+  return [
+    ...new Set(
+      [primaryModel, ...FREE_MODEL_FALLBACKS]
+        .map((model) => model.trim())
+        .filter((candidate) => candidate && !/^google\/gemma-4-31b-it(?::free)?$/i.test(candidate))
+    )
+  ];
+}
+
+function isEndpointUnavailable(error: unknown) {
+  return /no endpoints?|guardrail|data policy|privacy|model not found|404/i.test((error as Error).message);
+}
+
 export async function summarizeWithOpenRouter(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
   const apiKey = getEnv("OPENROUTER_API_KEY");
   const model = process.env.OPENROUTER_MODEL?.trim();
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set.");
   if (!model) throw new Error("OPENROUTER_MODEL is not set. Set it in Netlify environment variables.");
 
-  const baseBody = {
-    model,
-    messages: buildMessages(articles, extractions),
-    temperature: 0.2,
-    max_tokens: 3000
-  };
   const siteUrl = getEnv("OPENROUTER_SITE_URL");
   const appTitle = getEnv("OPENROUTER_APP_TITLE", "Nursing Research Monitor");
 
   let data;
-  try {
-    data = await callOpenRouter({ ...baseBody, response_format: { type: "json_object" } }, apiKey, siteUrl, appTitle);
-  } catch (error) {
-    if (!/response_format|json_object|schema|unsupported|400/i.test((error as Error).message)) throw error;
-    data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle);
+  let usedModel = model;
+  const modelErrors: string[] = [];
+
+  for (const candidateModel of modelCandidates(model)) {
+    const baseBody = {
+      model: candidateModel,
+      messages: buildMessages(articles, extractions),
+      temperature: 0.2,
+      max_tokens: 3000,
+      provider: {
+        data_collection: "allow",
+        allow_fallbacks: true
+      }
+    };
+    try {
+      usedModel = candidateModel;
+      try {
+        data = await callOpenRouter({ ...baseBody, response_format: { type: "json_object" } }, apiKey, siteUrl, appTitle);
+      } catch (error) {
+        if (!/response_format|json_object|schema|unsupported|400/i.test((error as Error).message)) throw error;
+        data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle);
+      }
+      break;
+    } catch (error) {
+      modelErrors.push(`${candidateModel}: ${(error as Error).message}`);
+      if (!isEndpointUnavailable(error)) throw error;
+    }
+  }
+
+  if (!data) {
+    throw new Error(`No OpenRouter free model endpoint was available. Tried: ${modelErrors.join(" | ")}`);
   }
 
   const content = data.choices?.[0]?.message?.content || "";
@@ -109,6 +150,6 @@ export async function summarizeWithOpenRouter(articles: BriefArticleInput[], ext
   return {
     parsed,
     raw: content,
-    model
+    model: usedModel
   };
 }

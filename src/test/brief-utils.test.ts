@@ -101,6 +101,39 @@ describe("AI findings brief utilities", () => {
     }
   });
 
+  it("falls back to another free model when the configured endpoint is blocked", async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousModel = process.env.OPENROUTER_MODEL;
+    try {
+      process.env.OPENROUTER_API_KEY = "test-key";
+      process.env.OPENROUTER_MODEL = "blocked/model:free";
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          text: async () =>
+            JSON.stringify({
+              error: { message: "No endpoints available matching your guardrail restrictions and data policy." }
+            })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              choices: [{ message: { content: "{\"executiveSummary\":\"OK\"}" } }]
+            })
+        });
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await summarizeWithOpenRouter([], []);
+      expect(result.model).toBe("openai/gpt-oss-20b:free");
+      expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).model).toBe("openai/gpt-oss-20b:free");
+    } finally {
+      process.env.OPENROUTER_API_KEY = previousKey;
+      process.env.OPENROUTER_MODEL = previousModel;
+    }
+  });
+
   it("generates a PDF document", () => {
     const extraction = {
       doi: "10.1/test",
