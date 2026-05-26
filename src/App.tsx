@@ -190,6 +190,7 @@ export default function App({ initialData }: AppProps) {
       !briefStatus?.jobId ||
       briefStatus.status === "completed" ||
       briefStatus.status === "completed_with_fallback" ||
+      briefStatus.status === "failed_model_unavailable" ||
       briefStatus.status === "failed"
     ) {
       return;
@@ -511,11 +512,22 @@ function BriefJobPanel({ status }: { status: BriefJobStatus }) {
     completed: "Ready",
     failed: "Failed"
   };
-  const currentStepLabel = status.status === "completed_with_fallback" ? "Ready with fallback" : stepLabels[status.progress.step];
+  const currentStepLabel =
+    status.status === "completed_with_fallback"
+      ? "Ready with fallback"
+      : status.status === "failed_model_unavailable"
+        ? "AI synthesis unavailable"
+        : stepLabels[status.progress.step];
   return (
     <div className="brief-status" role="status" aria-live="polite">
       <strong>{currentStepLabel}</strong>
-      <span>{status.progress.message}</span>
+      <span>
+        {status.status === "failed_model_unavailable"
+          ? "AI synthesis could not be generated. Try another model or adjust OpenRouter privacy settings."
+          : status.status === "completed"
+            ? "AI Findings Brief ready."
+            : status.progress.message}
+      </span>
       {source ? (
         <span>
           OA full text: {source.oaFullTextUsed}; abstract only: {source.abstractOnly}; extraction failed:{" "}
@@ -525,15 +537,20 @@ function BriefJobPanel({ status }: { status: BriefJobStatus }) {
       {status.status === "completed_with_fallback" ? (
         <span className="brief-warning">PDF generated with fallback notes. The selected language model was not available.</span>
       ) : null}
-      {status.errors.length ? (
+      {status.status === "failed_model_unavailable" ? (
+        <span className="brief-error">
+          AI synthesis could not be generated. The selected OpenRouter model was unavailable or blocked by privacy/data
+          policy settings.
+        </span>
+      ) : status.errors.length ? (
         <span className={status.status === "completed_with_fallback" ? "brief-warning" : "brief-error"}>
-          {status.errors.join(" ")}
+          {status.errors.join(" ").slice(0, 280)}
         </span>
       ) : null}
       {status.modelUsed ? <span>Model: {status.modelUsed}</span> : null}
       {status.downloadAvailable && status.downloadUrl ? (
         <a className="download-brief" href={status.downloadUrl}>
-          Download PDF again
+          {status.status === "completed_with_fallback" ? "Download fallback notes" : "Download AI brief"}
         </a>
       ) : null}
     </div>

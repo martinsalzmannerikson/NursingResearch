@@ -25,4 +25,18 @@ describe("Netlify functions compile and expose modern handlers", () => {
     expect(typeof updateLatest.default).toBe("function");
     expect(updateLatest.config).toMatchObject({ schedule: "0 5 * * *" });
   });
+
+  it("maps model failures to failed_model_unavailable without creating a PDF state", async () => {
+    const { OpenRouterModelUnavailableError } = await import("../../netlify/functions/_shared/brief-openrouter");
+    const { failureStateForBriefError } = await import("../../netlify/functions/process-summary-background.mts");
+    const failure = failureStateForBriefError(
+      new OpenRouterModelUnavailableError(
+        "AI synthesis could not be generated. The selected OpenRouter model was unavailable or blocked by privacy/data policy settings. Try another model or adjust OpenRouter privacy settings.",
+        "OpenRouter could not find an endpoint compatible with the current privacy/data policy settings."
+      )
+    );
+    expect(failure.status).toBe("failed_model_unavailable");
+    expect(failure.message).toMatch(/AI synthesis could not be generated/i);
+    expect(failure).not.toHaveProperty("pdfKey");
+  });
 });

@@ -116,16 +116,19 @@ OPENALEX_MAX_PAGES_PER_CHUNK=10
 OPENALEX_RESOLVE_DELAY_MS=750
 MAX_ARTICLES_PER_BRIEF=6
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=
-OPENROUTER_REQUEST_TIMEOUT_MS=20000
+OPENROUTER_MODEL=openai/gpt-5-mini
+OPENROUTER_FALLBACK_MODELS=
+OPENROUTER_REQUEST_TIMEOUT_MS=30000
 OPENROUTER_SITE_URL=
 OPENROUTER_APP_TITLE=Nursing Research Monitor
+ALLOW_DETERMINISTIC_FALLBACK_PDF=false
 ```
 
 `OPENALEX_API_KEY`, `OPENALEX_MAILTO`, and `OPENALEX_RESOLVE_DELAY_MS` are used by local/GitHub Actions source resolution. Netlify production does not run source resolution.
-`OPENROUTER_API_KEY` and `OPENROUTER_MODEL` are used for AI findings brief jobs. The selected model is read server-side only.
-`OPENROUTER_REQUEST_TIMEOUT_MS` controls how long the server waits for the selected model before using fallback notes.
-If OpenRouter is unavailable, the app still generates a clearly marked deterministic fallback PDF from the available abstracts/sections.
+`OPENROUTER_API_KEY` and `OPENROUTER_MODEL` are used for AI findings brief jobs. The recommended production model is `openai/gpt-5-mini`, and the selected model is read server-side only.
+`OPENROUTER_FALLBACK_MODELS` is optional. If set, it is parsed as a comma-separated priority list and sent to OpenRouter as a `models` array after the primary model.
+`OPENROUTER_REQUEST_TIMEOUT_MS` controls how long the server waits for a usable model response.
+`ALLOW_DETERMINISTIC_FALLBACK_PDF` defaults to `false`. When false, model failure returns a clear error and no PDF; when explicitly true, a fallback-notes PDF may be generated.
 
 ## Netlify Deploy
 
@@ -165,10 +168,12 @@ MAX_RESULTS=5000
 OPENALEX_MAX_PAGES_PER_CHUNK=10
 MAX_ARTICLES_PER_BRIEF=6
 OPENROUTER_API_KEY
-OPENROUTER_MODEL=your-provider/your-model
-OPENROUTER_REQUEST_TIMEOUT_MS=20000
+OPENROUTER_MODEL=openai/gpt-5-mini
+OPENROUTER_FALLBACK_MODELS=openai/gpt-5-nano,mistralai/mistral-small-3.2-24b-instruct
+OPENROUTER_REQUEST_TIMEOUT_MS=30000
 OPENROUTER_SITE_URL=https://nursing-research-monitor.netlify.app
 OPENROUTER_APP_TITLE=Nursing Research Monitor
+ALLOW_DETERMINISTIC_FALLBACK_PDF=false
 ```
 
 D. Deploy production.
@@ -193,7 +198,8 @@ G. Confirm that the scheduled function updates once per day at 05:00 UTC.
 Users can select up to `MAX_ARTICLES_PER_BRIEF` articles and generate a PDF findings brief. The workflow is job based:
 
 - `POST /api/start-summary-job` validates selected article metadata, stores a queued job in Netlify Blobs, and invokes the background function.
-- `process-summary-background` checks DOI-first OpenAlex metadata, retrieves only legal OA locations reported by OpenAlex, extracts allowed Methods/Findings/Conclusions sections when reliable, calls the selected OpenRouter model with timeout handling, and stores the generated PDF in Netlify Blobs. If OpenRouter is unavailable, it generates a source-status-aware deterministic fallback brief instead of failing the job.
+- `process-summary-background` checks DOI-first OpenAlex metadata, retrieves only legal OA locations reported by OpenAlex, extracts allowed Methods/Findings/Conclusions sections when reliable, sends a compact evidence package to the selected OpenRouter model, and stores the generated PDF in Netlify Blobs only when a usable Markdown synthesis is returned.
+- If OpenRouter is unavailable, blocked by privacy/data-policy settings, rate-limited, or returns unusable output, the job becomes `failed_model_unavailable` and no PDF is created by default.
 - `GET /api/get-summary-status?jobId=...` returns job progress and source-status summaries without returning extracted article text.
 - `GET /api/download-summary-pdf?jobId=...` downloads the generated PDF.
 
@@ -202,7 +208,7 @@ Fallback hierarchy:
 1. DOI + legal OA full text + reliable section extraction.
 2. DOI + legal OA full text but extraction failed, with warning and abstract fallback.
 3. Abstract only.
-4. Insufficient data, clearly marked in the source table.
+4. Insufficient data, clearly marked in the article source notes.
 
 The app never uses subscription bypasses or Sci-Hub-style access. PDF parsing is conservative in this MVP: unsupported or unparsable full text falls back to abstract and records an extraction warning.
 
@@ -212,9 +218,9 @@ Local testing for brief jobs should use Netlify Dev so Blobs and background func
 netlify dev
 ```
 
-Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in the Netlify Dev environment before generating a live model-based brief. Optional: set `OPENROUTER_REQUEST_TIMEOUT_MS` to tune how quickly a slow or blocked model is skipped in favor of fallback notes.
+Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL=openai/gpt-5-mini` in the Netlify Dev environment before generating a live model-based brief. Optional: set `OPENROUTER_FALLBACK_MODELS` to explicitly allow additional paid/accessible models. The app does not silently inject free fallback models.
 
-PDF visual QA: generate a brief locally through Netlify Dev or production, open the downloaded PDF in a normal PDF viewer, and confirm it has a light background, dark readable body text, complete main headings, and stacked article source cards with no clipped text.
+PDF visual QA: generate a brief locally through Netlify Dev or production, open the downloaded PDF in a normal PDF viewer, and confirm it has a light background, dark readable body text, complete main headings, no raw provider errors, and no workflow/audit page.
 
 ## Checks
 

@@ -75,6 +75,33 @@ export function capText(value: string, max: number) {
   return clean.length > max ? `${clean.slice(0, max).trim()}...` : clean;
 }
 
+export function stripMarkupTags(value: string) {
+  return String(value || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(Number.parseInt(code, 16)));
+}
+
+export function cleanBriefText(value: string, max = Number.POSITIVE_INFINITY) {
+  const clean = stripMarkupTags(value)
+    .replace(/[\u2018\u2019\u201a]/g, "'")
+    .replace(/[\u201c\u201d\u201e]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return Number.isFinite(max) ? capText(clean, max) : clean;
+}
+
 export function reconstructAbstract(abstractInvertedIndex: unknown) {
   if (!abstractInvertedIndex || typeof abstractInvertedIndex !== "object") return "";
   const words: string[] = [];

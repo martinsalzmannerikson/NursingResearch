@@ -1,34 +1,31 @@
 import { getEnv } from "./env.js";
-import { capText, parseOpenRouterJson, type ArticleExtraction, type BriefArticleInput } from "./brief-utils.js";
+import { cleanBriefText, stripMarkupTags, type ArticleExtraction, type BriefArticleInput } from "./brief-utils.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_OPENROUTER_TIMEOUT_MS = 20_000;
+const DEFAULT_OPENROUTER_TIMEOUT_MS = 30_000;
+const MODEL_UNAVAILABLE_MESSAGE =
+  "AI synthesis could not be generated. The selected OpenRouter model was unavailable or blocked by privacy/data policy settings. Try another model or adjust OpenRouter privacy settings.";
 
-type SummaryJson = {
-  executiveSummary: string;
-  keyFindings: string[];
-  methodologicalProfile: string[];
-  implicationsForNursingResearch: string[];
-  limitationsOfEvidenceBase: string[];
-  articleNotes: Array<{
-    title: string;
-    note: string;
-    sourceStatus: string;
-    designMethods: string;
-    findingsUsed: string;
-    evidenceWeight: "Low" | "Med" | "High";
-  }>;
-  sourceStatusSummary: string[];
-};
-
-type SummaryResult = {
-  parsed: SummaryJson;
+export type SummaryResult = {
+  markdown: string;
   raw: string;
   model: string;
   fallback: boolean;
   fallbackReason?: string;
   errorSummary?: string[];
 };
+
+export class OpenRouterModelUnavailableError extends Error {
+  friendlyMessage: string;
+  details: string;
+
+  constructor(friendlyMessage = MODEL_UNAVAILABLE_MESSAGE, details = "") {
+    super(friendlyMessage);
+    this.name = "OpenRouterModelUnavailableError";
+    this.friendlyMessage = friendlyMessage;
+    this.details = details;
+  }
+}
 
 class OpenRouterRequestError extends Error {
   status: number;
@@ -43,61 +40,89 @@ class OpenRouterRequestError extends Error {
   }
 }
 
-function articleEvidence(article: BriefArticleInput, extraction: ArticleExtraction) {
+function allowDeterministicFallbackPdf() {
+  return /^true$/i.test(process.env.ALLOW_DETERMINISTIC_FALLBACK_PDF || "");
+}
+
+function parseFallbackModels() {
+  return (process.env.OPENROUTER_FALLBACK_MODELS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item && item !== "undefined" && item !== "null");
+}
+
+function sourceBasis(extraction: ArticleExtraction) {
+  if (extraction.sourceStatus === "oa_fulltext_sections_used") return "OA full text sections";
+  if (extraction.sourceStatus === "abstract_only") return "abstract only";
+  if (extraction.sourceStatus === "fulltext_found_but_extraction_failed") {
+    return "full text found but extraction failed, abstract used";
+  }
+  if (extraction.sourceStatus === "no_doi") return "no DOI, abstract used when available";
+  return "insufficient data";
+}
+
+function yearOf(article: BriefArticleInput) {
+  return article.year || article.publicationYear || article.publication_year || "";
+}
+
+function compactArticleEvidence(article: BriefArticleInput, extraction: ArticleExtraction) {
+  const fullTextSections = extraction.sourceStatus === "oa_fulltext_sections_used";
   return {
-    title: article.title || extraction.title,
-    authors: article.authors || [],
-    year: article.year || article.publicationYear || article.publication_year || "",
-    journal: article.journal || article.journal_name || article.source || "",
-    doi: extraction.doi,
-    sourceStatus: extraction.sourceStatus,
-    sectionsUsed: extraction.sectionsUsed,
-    extractionWarnings: extraction.extractionWarnings,
-    isRetracted: extraction.isRetracted,
-    methods: capText(extraction.methodsText, 2500),
-    findings: capText(extraction.findingsText, 7000),
-    conclusions: capText(extraction.conclusionsText, 2500),
-    abstractFallback:
-      extraction.sourceStatus === "oa_fulltext_sections_used" ? "" : capText(extraction.abstract, 2500)
+    title: cleanBriefText(article.title || extraction.title || "Untitled article", 280),
+    year: yearOf(article),
+    journal: cleanBriefText(article.journal || article.journal_name || article.source || "", 160),
+    doi: cleanBriefText(extraction.doi || article.doi || "", 160),
+    sourceBasis: sourceBasis(extraction),
+    sectionsUsed: extraction.sectionsUsed.map((section) => cleanBriefText(section, 80)).filter(Boolean),
+    methodText: cleanBriefText(extraction.methodsText, 900),
+    findingsText: cleanBriefText(extraction.findingsText, 1600),
+    conclusionText: cleanBriefText(extraction.conclusionsText, 700),
+    abstractText: fullTextSections ? "" : cleanBriefText(extraction.abstract || article.abstract || "", 900),
+    extractionWarnings: extraction.extractionWarnings.map((warning) => cleanBriefText(warning, 120)).slice(0, 2)
   };
 }
 
-function titleOf(article: BriefArticleInput, extraction: ArticleExtraction) {
-  return article.title || extraction.title || "Untitled article";
-}
-
-function sourceStatusLabel(extraction: ArticleExtraction) {
-  if (extraction.sourceStatus === "oa_fulltext_sections_used") return "OA full text sections used";
-  if (extraction.sourceStatus === "fulltext_found_but_extraction_failed") return "OA full text found, but extraction failed; abstract fallback used";
-  if (extraction.sourceStatus === "abstract_only") return "Abstract only";
-  if (extraction.sourceStatus === "no_doi") return "No DOI; abstract fallback used";
-  return "Insufficient data";
-}
-
-function evidenceBasis(extraction: ArticleExtraction) {
-  const basis = [];
-  if (extraction.methodsText) basis.push("methods");
-  if (extraction.findingsText) basis.push("findings/results");
-  if (extraction.conclusionsText) basis.push("conclusions");
-  if (!basis.length && extraction.abstract) basis.push("abstract");
-  return basis.length ? basis.join(", ") : "no usable source text";
-}
-
-function sourceText(extraction: ArticleExtraction) {
-  return capText(
-    extraction.findingsText ||
-      extraction.conclusionsText ||
-      extraction.methodsText ||
-      extraction.abstract ||
-      "No usable article text was available.",
-    700
-  );
-}
-
-function methodText(extraction: ArticleExtraction) {
-  if (extraction.methodsText) return capText(extraction.methodsText, 420);
-  if (extraction.abstract) return "Method details are limited to the supplied abstract.";
-  return "Method details were not available.";
+export function buildOpenRouterMessages(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
+  const evidence = articles.map((article, index) => compactArticleEvidence(article, extractions[index]));
+  return [
+    {
+      role: "system",
+      content:
+        "You are writing a concise academic evidence brief for nursing researchers. Use only the supplied article material. Prefer Methods, Results/Findings, and Conclusions when available. If only an abstract is available, treat it cautiously. Do not invent details. Do not cite sections that were not supplied. Do not use article background text as findings unless the record is abstract-only and this limitation is stated."
+    },
+    {
+      role: "user",
+      content: [
+        "Create a concise AI Findings Brief from the selected articles below. Synthesize across articles where possible. Do not write a technical report about the workflow. Do not mention OpenRouter. Do not mention fallback. Return simple Markdown only.",
+        "",
+        "Use exactly these headings:",
+        "# AI Findings Brief",
+        "",
+        "## Synthesis in brief",
+        "One concise paragraph, 120-180 words.",
+        "",
+        "## Main findings across the selected articles",
+        "3-5 bullet points. Each bullet should synthesize across articles where possible, not simply repeat one article at a time.",
+        "",
+        "## Methodological basis",
+        "A short paragraph describing the kinds of evidence used, for example qualitative interview study, protocol paper, abstract-only record, OA full-text record.",
+        "",
+        "## Implications for nursing research",
+        "2-4 bullet points.",
+        "",
+        "## Cautions",
+        "2-4 bullet points. Mention abstract-only or extraction-failed articles here, but do not let this dominate the whole report.",
+        "",
+        "## Article source notes",
+        "One short line per selected article: Title; year; source basis; sections used.",
+        "",
+        "Do not include JSON, raw HTML tags, code fences, provider errors, fallback language, or app architecture details.",
+        "",
+        "Selected articles:",
+        JSON.stringify(evidence, null, 2)
+      ].join("\n")
+    }
+  ];
 }
 
 function friendlyOpenRouterMessage(error: unknown) {
@@ -105,120 +130,88 @@ function friendlyOpenRouterMessage(error: unknown) {
     if (error.status === 429) {
       return "OpenRouter rate limit: the selected model/provider is temporarily rate-limited. Try again later or choose a model/provider with available capacity.";
     }
-    if (error.status === 404 && /privacy|data policy|no endpoints?/i.test(error.body)) {
+    if (error.status === 404 && /privacy|data policy|no endpoints?|guardrail/i.test(error.body)) {
       return "OpenRouter could not find an endpoint compatible with the current privacy/data policy settings. Check OpenRouter privacy settings or choose another model/provider.";
     }
     if (error.status === 401 || error.status === 403) {
       return "OpenRouter rejected the request. Check the server-side API key and model/provider access.";
     }
-    return `OpenRouter returned HTTP ${error.status}. A fallback brief was generated.`;
+    return `OpenRouter returned HTTP ${error.status}.`;
   }
   const message = (error as Error).message || "Unknown OpenRouter error.";
-  if (/timed out|timeout|abort/i.test(message)) {
-    return "OpenRouter timed out before returning a usable synthesis. A fallback brief was generated.";
-  }
-  if (/json|parse/i.test(message)) {
-    return "OpenRouter returned a response that was not valid JSON. A fallback brief was generated.";
-  }
+  if (/timed out|timeout|abort/i.test(message)) return "OpenRouter timed out before returning a usable synthesis.";
   if (/OPENROUTER_MODEL/i.test(message)) {
-    return "OPENROUTER_MODEL is not set. A fallback brief was generated.";
+    return "OPENROUTER_MODEL is not set. Set it to an accessible OpenRouter model such as openai/gpt-5-mini.";
   }
-  if (/OPENROUTER_API_KEY/i.test(message)) {
-    return "OPENROUTER_API_KEY is not set. A fallback brief was generated.";
-  }
-  return "OpenRouter did not return a usable synthesis. A fallback brief was generated.";
+  if (/OPENROUTER_API_KEY/i.test(message)) return "OPENROUTER_API_KEY is not set on the server.";
+  if (/markdown|heading|empty|usable/i.test(message)) return "The selected model did not return a usable Markdown synthesis.";
+  return "OpenRouter did not return a usable synthesis.";
 }
 
-function fallbackSummary(
-  articles: BriefArticleInput[],
-  extractions: ArticleExtraction[],
-  friendlyReasons: string[]
-): SummaryResult {
-  const reasons = [...new Set(friendlyReasons)].filter(Boolean);
-  const articleNotes = articles.map((article, index) => {
-    const extraction = extractions[index];
-    return {
-      title: extraction ? titleOf(article, extraction) : article.title || "Untitled article",
-      note: extraction
-        ? `Based on ${evidenceBasis(extraction)}. ${sourceText(extraction)}`
-        : "No extraction record was available for this article.",
-      sourceStatus: extraction ? sourceStatusLabel(extraction) : "Insufficient data",
-      designMethods: extraction ? methodText(extraction) : "Method details were not available.",
-      findingsUsed: extraction ? sourceText(extraction) : "No findings text was available.",
-      evidenceWeight: extraction?.sourceStatus === "oa_fulltext_sections_used" ? ("Med" as const) : ("Low" as const)
-    };
-  });
-  const fullTextCount = extractions.filter((item) => item.sourceStatus === "oa_fulltext_sections_used").length;
-  const fallbackCount = extractions.filter((item) => item.sourceStatus !== "oa_fulltext_sections_used").length;
-  const parsed: SummaryJson = {
-    executiveSummary:
-      "This brief was generated using fallback extraction notes because the selected OpenRouter model did not return a usable synthesis. It summarizes only the supplied article sections or abstracts and should be read as a source-status-aware findings aid, not as a full AI-generated synthesis.",
-    keyFindings: articleNotes.map((note, index) => `${index + 1}. ${note.title}: ${capText(note.findingsUsed, 360)}`),
-    methodologicalProfile: articleNotes.map((note, index) => `${index + 1}. ${note.title}: ${note.designMethods}`),
-    implicationsForNursingResearch: [
-      "Use these notes to identify candidate findings and methods for closer reading; do not treat fallback wording as a substitute for full article appraisal.",
-      "Where only abstracts or failed full-text extraction are available, claims should remain cautious and non-causal unless the abstract itself supports stronger wording."
-    ],
-    limitationsOfEvidenceBase: [
-      "The selected OpenRouter model did not return a usable synthesis, so cross-study interpretation is intentionally limited.",
-      `${fullTextCount} record(s) used reliable OA full-text sections; ${fallbackCount} record(s) used abstract or extraction-failure fallback text.`,
-      "Provider error details are kept out of this PDF; the user-facing job status contains a concise explanation."
-    ],
-    articleNotes,
-    sourceStatusSummary: [
-      "Fallback extraction notes were used because the selected OpenRouter model was unavailable or did not return usable JSON.",
-      ...reasons.slice(0, 2)
-    ]
-  };
-  return {
-    parsed,
-    raw: JSON.stringify({ fallback: true, reasons, parsed }),
-    model: "deterministic-fallback",
-    fallback: true,
-    fallbackReason: reasons[0] || "The selected OpenRouter model did not return a usable synthesis.",
-    errorSummary: reasons
-  };
+function sanitizeMarkdown(markdown: string) {
+  return stripMarkupTags(markdown.replace(/```[\s\S]*?```/g, " "))
+    .replace(/[\u2018\u2019\u201a]/g, "'")
+    .replace(/[\u201c\u201d\u201e]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t\r\f\v]+/g, " ")
+    .replace(/\n\s+/g, "\n")
+    .replace(/\s+(#{1,3}\s+)/g, "\n\n$1")
+    .replace(/\s+(-\s+)/g, "\n$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
-function buildMessages(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
-  const evidence = articles.map((article, index) => articleEvidence(article, extractions[index]));
-  return [
-    {
-      role: "system",
-      content:
-        "You produce cautious academic JSON summaries for nursing research. Use only supplied Methods, Results/Findings, Conclusions, or Abstract fallback. Do not invent study details. Do not use introduction, background, literature review, or discussion unless a supplied section is explicitly marked as a combined findings/discussion section. Be explicit when a claim is based on abstract only. Return valid JSON only."
-    },
-    {
-      role: "user",
-      content: JSON.stringify(
-        {
-          task:
-            "Create an AI-assisted findings brief. Include executiveSummary, keyFindings, methodologicalProfile, implicationsForNursingResearch, limitationsOfEvidenceBase, articleNotes, and sourceStatusSummary. Return articleNotes in the same order as the supplied evidence, with cautious designMethods, findingsUsed, and evidenceWeight fields.",
-          outputShape: {
-            executiveSummary: "string",
-            keyFindings: ["string"],
-            methodologicalProfile: ["string"],
-            implicationsForNursingResearch: ["string"],
-            limitationsOfEvidenceBase: ["string"],
-            articleNotes: [
-              {
-                title: "string",
-                note: "string",
-                sourceStatus: "string",
-                designMethods: "string",
-                findingsUsed: "string",
-                evidenceWeight: "Low | Med | High"
-              }
-            ],
-            sourceStatusSummary: ["string"]
-          },
-          evidence
-        },
-        null,
-        2
-      )
-    }
+function validateMarkdown(markdown: string) {
+  if (!markdown.trim()) throw new Error("OpenRouter returned an empty response.");
+  if (/openrouter|provider returned|guardrail|data policy|no endpoints available/i.test(markdown)) {
+    throw new Error("OpenRouter response contained provider status text instead of a synthesis.");
+  }
+  const required = [
+    "## Synthesis in brief",
+    "## Main findings across the selected articles",
+    "## Methodological basis",
+    "## Implications for nursing research",
+    "## Cautions",
+    "## Article source notes"
   ];
+  const missing = required.filter((heading) => !markdown.toLowerCase().includes(heading.toLowerCase()));
+  if (missing.length) throw new Error(`OpenRouter response was missing required Markdown heading(s): ${missing.join(", ")}`);
+}
+
+function deterministicFallbackMarkdown(articles: BriefArticleInput[], extractions: ArticleExtraction[]) {
+  const lines = [
+    "# Fallback Evidence Notes",
+    "",
+    "## Synthesis in brief",
+    "A language-model synthesis was not available. These notes list only the extracted source material and should not be read as a cross-article AI synthesis.",
+    "",
+    "## Main findings across the selected articles"
+  ];
+  extractions.forEach((extraction, index) => {
+    const article = articles[index];
+    const text = cleanBriefText(extraction.findingsText || extraction.conclusionsText || extraction.abstract || "No usable source text.", 260);
+    lines.push(`- ${cleanBriefText(article?.title || extraction.title || "Untitled article", 140)}: ${text}`);
+  });
+  lines.push("", "## Methodological basis");
+  lines.push("The source basis varies by article and may include OA full-text sections, abstracts, or insufficient data.");
+  lines.push("", "## Implications for nursing research");
+  lines.push("- Use these notes only to decide which source records merit closer reading.");
+  lines.push("- Avoid treating fallback notes as a synthesized evidence brief.");
+  lines.push("", "## Cautions");
+  lines.push("- The selected language model did not return a usable synthesis.");
+  lines.push("- Abstract-only and insufficient-data records require cautious interpretation.");
+  lines.push("", "## Article source notes");
+  extractions.forEach((extraction, index) => {
+    const article = articles[index];
+    lines.push(
+      `- ${cleanBriefText(article?.title || extraction.title || "Untitled article", 140)}; ${yearOf(article || {}) || "n.d."}; ${sourceBasis(
+        extraction
+      )}; sections used: ${extraction.sectionsUsed.join(", ") || "none"}.`
+    );
+  });
+  return lines.join("\n");
 }
 
 async function callOpenRouter(
@@ -226,7 +219,8 @@ async function callOpenRouter(
   apiKey: string,
   siteUrl: string,
   appTitle: string,
-  timeoutMs: number
+  timeoutMs: number,
+  primaryModel: string
 ) {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
@@ -235,7 +229,14 @@ async function callOpenRouter(
   };
   if (siteUrl) headers["HTTP-Referer"] = siteUrl;
 
-  console.log("Using OpenRouter model:", body.model);
+  console.log("Using OpenRouter model:", primaryModel);
+  console.log("OpenRouter request shape:", {
+    primaryModel,
+    fallbackModels: Array.isArray(body.models) ? (body.models as string[]).slice(1) : [],
+    strictJsonSchemaDisabled: true,
+    providerRestrictionsDisabled: true
+  });
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -246,11 +247,11 @@ async function callOpenRouter(
       signal: controller.signal
     });
     const text = await response.text();
-    if (!response.ok) throw new OpenRouterRequestError(response.status, text, String(body.model || ""));
-    return JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
+    if (!response.ok) throw new OpenRouterRequestError(response.status, text, primaryModel);
+    return JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }>; model?: string };
   } catch (error) {
     if ((error as Error).name === "AbortError") {
-      throw new Error(`OpenRouter request timed out after ${timeoutMs} ms for model ${String(body.model)}.`);
+      throw new Error(`OpenRouter request timed out after ${timeoutMs} ms for model ${primaryModel}.`);
     }
     throw error;
   } finally {
@@ -268,53 +269,50 @@ export async function summarizeWithOpenRouter(
   if (!apiKey || !model) {
     const reason = friendlyOpenRouterMessage(new Error(!apiKey ? "OPENROUTER_API_KEY is not set." : "OPENROUTER_MODEL is not set."));
     await onProgress?.(reason);
-    return fallbackSummary(articles, extractions, [reason]);
+    throw new OpenRouterModelUnavailableError(MODEL_UNAVAILABLE_MESSAGE, reason);
   }
 
+  const fallbackModels = parseFallbackModels();
   const siteUrl = getEnv("OPENROUTER_SITE_URL");
   const appTitle = getEnv("OPENROUTER_APP_TITLE", "Nursing Research Monitor");
   const timeoutMs = Number(getEnv("OPENROUTER_REQUEST_TIMEOUT_MS", String(DEFAULT_OPENROUTER_TIMEOUT_MS))) || DEFAULT_OPENROUTER_TIMEOUT_MS;
-  const baseBody = {
-    model,
-    messages: buildMessages(articles, extractions),
+  const messages = buildOpenRouterMessages(articles, extractions);
+  const body: Record<string, unknown> = {
+    messages,
     temperature: 0.2,
-    max_tokens: 3000,
-    provider: {
-      data_collection: "allow",
-      allow_fallbacks: true
-    }
+    max_tokens: 1800
   };
+  if (fallbackModels.length) body.models = [model, ...fallbackModels];
+  else body.model = model;
 
   try {
-    await onProgress?.(`Trying OpenRouter model ${model}.`);
-    let data;
-    try {
-      data = await callOpenRouter({ ...baseBody, response_format: { type: "json_object" } }, apiKey, siteUrl, appTitle, timeoutMs);
-    } catch (error) {
-      if (!/response_format|json_object|schema|unsupported|400/i.test((error as Error).message)) throw error;
-      await onProgress?.(`Retrying ${model} without JSON response_format.`);
-      data = await callOpenRouter(baseBody, apiKey, siteUrl, appTitle, timeoutMs);
-    }
+    await onProgress?.(`Sending compact evidence package to ${model}.`);
+    const data = await callOpenRouter(body, apiKey, siteUrl, appTitle, timeoutMs, model);
     const raw = data.choices?.[0]?.message?.content || "";
-    if (!raw) throw new Error("OpenRouter returned an empty response.");
-    try {
-      return {
-        parsed: parseOpenRouterJson(raw),
-        raw,
-        model,
-        fallback: false,
-        errorSummary: []
-      };
-    } catch (error) {
-      console.error("OpenRouter returned invalid JSON:", error, raw.slice(0, 1000));
-      const reason = friendlyOpenRouterMessage(new Error(`OpenRouter response JSON parsing failed: ${(error as Error).message}`));
-      await onProgress?.("OpenRouter returned invalid JSON; generating fallback evidence notes.");
-      return fallbackSummary(articles, extractions, [reason]);
-    }
+    const markdown = sanitizeMarkdown(raw);
+    validateMarkdown(markdown);
+    return {
+      markdown,
+      raw,
+      model: data.model || model,
+      fallback: false,
+      errorSummary: []
+    };
   } catch (error) {
     console.error("OpenRouter synthesis failed:", error);
     const reason = friendlyOpenRouterMessage(error);
-    await onProgress?.("OpenRouter was unavailable; generating fallback evidence notes.");
-    return fallbackSummary(articles, extractions, [reason]);
+    await onProgress?.("AI synthesis could not be generated.");
+    if (!allowDeterministicFallbackPdf()) {
+      throw new OpenRouterModelUnavailableError(MODEL_UNAVAILABLE_MESSAGE, reason);
+    }
+    const markdown = deterministicFallbackMarkdown(articles, extractions);
+    return {
+      markdown,
+      raw: markdown,
+      model: "deterministic-fallback",
+      fallback: true,
+      fallbackReason: reason,
+      errorSummary: [reason]
+    };
   }
 }

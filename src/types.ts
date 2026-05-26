@@ -75,7 +75,7 @@ export type MonitorFilters = {
 
 export type BriefJobStatus = {
   jobId: string;
-  status: "queued" | "running" | "completed" | "completed_with_fallback" | "failed";
+  status: "queued" | "running" | "completed" | "completed_with_fallback" | "failed" | "failed_model_unavailable";
   progress: {
     step:
       | "queued"

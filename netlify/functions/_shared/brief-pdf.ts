@@ -1,44 +1,14 @@
-import { capText, sourceCoverage, type ArticleExtraction, type BriefArticleInput, type SourceCoverage } from "./brief-utils.js";
-
-type ArticleNote = {
-  title?: string;
-  note?: string;
-  sourceStatus?: string;
-  designMethods?: string;
-  findingsUsed?: string;
-  evidenceWeight?: string;
-};
-
-type SummaryJson = {
-  executiveSummary?: string;
-  keyFindings?: string[];
-  methodologicalProfile?: string[];
-  implicationsForNursingResearch?: string[];
-  limitationsOfEvidenceBase?: string[];
-  articleNotes?: ArticleNote[];
-  sourceStatusSummary?: string[];
-};
+import { cleanBriefText, sourceCoverage, stripMarkupTags, type ArticleExtraction, type BriefArticleInput } from "./brief-utils.js";
 
 type PdfPage = { commands: string[]; index: number };
-type ColorName =
-  | "page"
-  | "body"
-  | "muted"
-  | "heading"
-  | "accent"
-  | "border"
-  | "panel"
-  | "panelAlt"
-  | "success"
-  | "warning"
-  | "danger";
+type ColorName = "page" | "body" | "muted" | "heading" | "accent" | "border" | "panel" | "success" | "warning" | "danger";
 
 const width = 612;
 const height = 792;
 const margin = 44;
+const contentWidth = width - margin * 2;
 const topStart = 706;
 const bottomMargin = 56;
-const contentWidth = width - margin * 2;
 
 const colors: Record<ColorName, string> = {
   page: "0.985 0.982 0.965",
@@ -48,7 +18,6 @@ const colors: Record<ColorName, string> = {
   accent: "0.000 0.520 0.600",
   border: "0.760 0.820 0.820",
   panel: "1.000 1.000 1.000",
-  panelAlt: "0.940 0.970 0.970",
   success: "0.080 0.420 0.260",
   warning: "0.680 0.420 0.050",
   danger: "0.640 0.120 0.120"
@@ -67,8 +36,7 @@ const cp1252: Record<number, number> = {
   0x2026: 0x85,
   0x2022: 0x95,
   0x00a0: 0x20,
-  0x2122: 0x99,
-  0x00b7: 0xb7
+  0x2122: 0x99
 };
 
 function color(name: ColorName, stroke = false) {
@@ -88,9 +56,8 @@ function pdfString(value: string) {
   const bytes: number[] = [];
   for (const char of String(value ?? "")) {
     const code = char.codePointAt(0) ?? 32;
-    if ((code >= 0 && code <= 8) || code === 11 || code === 12 || (code >= 14 && code <= 31)) {
-      bytes.push(32);
-    } else if (code <= 0xff) bytes.push(code);
+    if ((code >= 0 && code <= 8) || code === 11 || code === 12 || (code >= 14 && code <= 31)) bytes.push(32);
+    else if (code <= 0xff) bytes.push(code);
     else if (cp1252[code]) bytes.push(cp1252[code]);
     else bytes.push(...fallbackCharBytes(char));
   }
@@ -105,94 +72,95 @@ function wrap(text: string, maxChars: number) {
     if (`${line} ${word}`.trim().length > maxChars && line) {
       lines.push(line);
       line = word;
-    } else {
-      line = `${line} ${word}`.trim();
-    }
+    } else line = `${line} ${word}`.trim();
   }
   if (line) lines.push(line);
   return lines.length ? lines : [""];
 }
 
-function asList(value: unknown) {
-  return Array.isArray(value) ? value.map(String).filter(Boolean) : value ? [String(value)] : [];
+type MarkdownBlock = { type: "h1" | "h2" | "p" | "li"; text: string };
+
+export function normalizeBriefMarkdown(markdown: string) {
+  return stripMarkupTags(markdown)
+    .replace(/[\u2018\u2019\u201a]/g, "'")
+    .replace(/[\u201c\u201d\u201e]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t\r\f\v]+/g, " ")
+    .replace(/\n\s+/g, "\n")
+    .replace(/```/g, "")
+    .replace(/\s+(#{1,2}\s+)/g, "\n\n$1")
+    .replace(/\s+([-*]\s+)/g, "\n$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
-function yearOf(article: BriefArticleInput) {
-  return article.year || article.publicationYear || article.publication_year || "n.d.";
+export function parseBriefMarkdown(markdown: string): MarkdownBlock[] {
+  const normalized = normalizeBriefMarkdown(markdown);
+  const blocks: MarkdownBlock[] = [];
+  let paragraph: string[] = [];
+
+  function flushParagraph() {
+    const text = paragraph.join(" ").trim();
+    if (text) blocks.push({ type: "p", text });
+    paragraph = [];
+  }
+
+  for (const rawLine of normalized.split(/\n+/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      continue;
+    }
+    if (/^#\s+/.test(line)) {
+      flushParagraph();
+      blocks.push({ type: "h1", text: line.replace(/^#\s+/, "") });
+      continue;
+    }
+    if (/^##\s+/.test(line)) {
+      flushParagraph();
+      blocks.push({ type: "h2", text: line.replace(/^##\s+/, "") });
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      flushParagraph();
+      blocks.push({ type: "li", text: line.replace(/^[-*]\s+/, "") });
+      continue;
+    }
+    paragraph.push(line);
+  }
+  flushParagraph();
+  return blocks;
 }
 
-function titleOf(article: BriefArticleInput, extraction?: ArticleExtraction) {
-  return article.title || extraction?.title || "Untitled article";
-}
-
-function noteFor(summary: SummaryJson, index: number) {
-  return Array.isArray(summary.articleNotes) ? summary.articleNotes[index] : undefined;
-}
-
-function sourceBasis(extraction: ArticleExtraction) {
-  if (extraction.sourceStatus === "oa_fulltext_sections_used") return "OA full text used";
-  if (extraction.sourceStatus === "fulltext_found_but_extraction_failed") return "Full text found; extraction failed";
-  if (extraction.sourceStatus === "abstract_only") return "Abstract only";
-  if (extraction.sourceStatus === "no_doi") return "No DOI";
-  return "Insufficient data";
-}
-
-function evidenceWeight(extraction: ArticleExtraction, note?: ArticleNote) {
-  if (note?.evidenceWeight) return note.evidenceWeight;
-  if (extraction.sourceStatus === "oa_fulltext_sections_used") return "Medium";
-  return "Low";
-}
-
-function methodsText(extraction: ArticleExtraction, note?: ArticleNote) {
-  if (note?.designMethods) return note.designMethods;
-  if (extraction.methodsText) return extraction.methodsText;
-  if (extraction.abstract) return "Method details are limited to the supplied abstract.";
-  return "Method details were not available.";
-}
-
-function findingsText(extraction: ArticleExtraction, note?: ArticleNote) {
-  if (note?.findingsUsed) return note.findingsUsed;
-  if (extraction.findingsText) return extraction.findingsText;
-  if (note?.note) return note.note;
-  if (extraction.abstract) return extraction.abstract;
-  return "No usable findings text was available.";
-}
-
-function warningsText(extraction: ArticleExtraction) {
-  return extraction.extractionWarnings.length ? extraction.extractionWarnings.join("; ") : "No extraction warnings recorded.";
-}
-
-function sourceCoverageTotal(coverage: SourceCoverage) {
-  return (
-    coverage.oaFullTextUsed +
-    coverage.abstractOnly +
-    coverage.fulltextFoundButExtractionFailed +
-    coverage.noDoi +
-    coverage.insufficientData
-  );
+function briefCoverage(extractions: ArticleExtraction[]) {
+  const coverage = sourceCoverage(extractions);
+  return {
+    oaFullTextUsed: coverage.oaFullTextUsed,
+    abstractOnly: coverage.abstractOnly,
+    extractionFailedAbstractUsed: coverage.fulltextFoundButExtractionFailed,
+    insufficientData: coverage.insufficientData + coverage.noDoi
+  };
 }
 
 export function generateFindingsBriefPdf({
-  jobId,
   articles,
   extractions,
-  summary,
-  synthesisMode = "model",
-  fallbackReason = ""
+  markdown,
+  synthesisMode = "model"
 }: {
-  jobId: string;
   articles: BriefArticleInput[];
   extractions: ArticleExtraction[];
-  summary: SummaryJson;
+  markdown: string;
   synthesisMode?: "model" | "fallback";
-  fallbackReason?: string;
 }) {
   const pages: PdfPage[] = [];
   let page: PdfPage = { commands: [], index: 0 };
   let y = 0;
   const generatedAt = new Date().toISOString().slice(0, 10);
-  const coverage = sourceCoverage(extractions);
   const isFallback = synthesisMode === "fallback";
+  const coverage = briefCoverage(extractions);
 
   function addPage() {
     page = { commands: [], index: pages.length + 1 };
@@ -200,7 +168,7 @@ export function generateFindingsBriefPdf({
     page.commands.push(`${color("page")} 0 0 ${width} ${height} re f`);
     page.commands.push(`${color("accent")} ${margin} 746 2 16 re f`);
     textAt("Nursing Research Monitor", margin + 12, 754, 9, "F2", "heading");
-    textAt(isFallback ? "Fallback evidence notes" : "AI findings brief", 390, 754, 8, "F1", "muted");
+    textAt(isFallback ? "Fallback notes" : "AI findings brief", 418, 754, 8, "F1", "muted");
     page.commands.push(`${color("border", true)} 0.4 w ${margin} 736 ${contentWidth} 0 l S`);
     textAt(`Page ${page.index}`, width - margin - 36, 34, 7, "F1", "muted");
     y = topStart;
@@ -211,7 +179,7 @@ export function generateFindingsBriefPdf({
   }
 
   function textAt(text: string, x: number, yy: number, size = 9, font = "F1", textColor: ColorName = "body") {
-    page.commands.push(`BT ${color(textColor)} /${font} ${size} Tf ${x} ${yy} Td ${pdfString(text)} Tj ET`);
+    page.commands.push(`BT ${color(textColor)} /${font} ${size} Tf ${x} ${yy} Td ${pdfString(cleanBriefText(text, 1200))} Tj ET`);
   }
 
   function rect(x: number, top: number, w: number, h: number, stroke: ColorName = "border", fill?: ColorName, lineWidth = 0.5) {
@@ -219,176 +187,74 @@ export function generateFindingsBriefPdf({
     page.commands.push(`${color(stroke, true)} ${lineWidth} w ${x} ${top - h} ${w} ${h} re S`);
   }
 
-  function textLines(text: string, size: number, maxWidth: number) {
-    return wrap(text, Math.max(12, Math.floor(maxWidth / (size * 0.5))));
-  }
-
   function paragraph(text: string, size = 9, textColor: ColorName = "body", x = margin, maxWidth = contentWidth) {
     const lineHeight = Math.ceil(size * 1.38);
-    for (const part of textLines(text, size, maxWidth)) {
+    for (const line of wrap(text, Math.max(12, Math.floor(maxWidth / (size * 0.5))))) {
       ensure(lineHeight + 2);
-      textAt(part, x, y, size, "F1", textColor);
+      textAt(line, x, y, size, "F1", textColor);
       y -= lineHeight;
     }
     y -= 6;
   }
 
-  function heading(text: string) {
-    ensure(46);
+  function h2(text: string) {
+    ensure(44);
     y -= 2;
-    textAt(text, margin, y, 14, "F2", "heading");
+    textAt(text, margin, y, 13.5, "F2", "heading");
     y -= 10;
-    page.commands.push(`${color("accent", true)} 0.6 w ${margin} ${y} 92 0 l S`);
-    y -= 16;
+    page.commands.push(`${color("accent", true)} 0.6 w ${margin} ${y} 86 0 l S`);
+    y -= 15;
   }
 
   function bullet(text: string) {
-    const x = margin + 12;
-    const lines = textLines(text, 9, contentWidth - 18);
-    ensure(lines.length * 14 + 4);
+    const x = margin + 13;
+    const lines = wrap(text, Math.floor((contentWidth - 20) / 4.7));
+    ensure(lines.length * 13 + 6);
     textAt("•", margin, y, 9, "F2", "accent");
     lines.forEach((line, index) => textAt(line, x, y - index * 13, 9, "F1", "body"));
     y -= lines.length * 13 + 6;
   }
 
-  function callout(title: string, text: string, tone: "info" | "warning" = "info") {
-    const lines = textLines(text, 8.5, contentWidth - 24);
-    const boxHeight = Math.max(56, 30 + lines.length * 12);
-    ensure(boxHeight + 10);
-    rect(margin, y, contentWidth, boxHeight, tone === "warning" ? "warning" : "border", tone === "warning" ? "panelAlt" : "panel");
-    textAt(title, margin + 12, y - 18, 9, "F2", tone === "warning" ? "warning" : "heading");
-    lines.forEach((line, index) => textAt(line, margin + 12, y - 34 - index * 12, 8.5, "F1", "body"));
-    y -= boxHeight + 14;
-  }
-
-  function coverageCards() {
-    const total = sourceCoverageTotal(coverage);
-    paragraph(`Generated ${generatedAt}. Selected articles: ${articles.length}. Source coverage accounted for: ${total}/${articles.length}.`, 9, "muted");
+  function coverageRow() {
     const items = [
       ["OA full text used", coverage.oaFullTextUsed, "success"],
       ["Abstract only", coverage.abstractOnly, "accent"],
-      ["Full text extraction failed", coverage.fulltextFoundButExtractionFailed, "warning"],
-      ["No DOI", coverage.noDoi, "muted"],
+      ["Extraction failed, abstract used", coverage.extractionFailedAbstractUsed, "warning"],
       ["Insufficient data", coverage.insufficientData, "danger"]
     ] as const;
-    const gap = 7;
-    const cardWidth = (contentWidth - gap * 4) / 5;
+    const gap = 8;
+    const cardWidth = (contentWidth - gap * 3) / 4;
     const top = y;
-    ensure(58);
+    ensure(56);
     items.forEach(([label, value, tone], index) => {
       const x = margin + index * (cardWidth + gap);
-      rect(x, top, cardWidth, 52, "border", "panel");
-      textAt(String(value), x + 8, top - 19, 16, "F2", tone);
-      for (const [lineIndex, line] of textLines(label, 6.5, cardWidth - 16).slice(0, 2).entries()) {
-        textAt(line, x + 8, top - 34 - lineIndex * 9, 6.5, "F1", "muted");
-      }
+      rect(x, top, cardWidth, 50, "border", "panel");
+      textAt(String(value), x + 8, top - 18, 15, "F2", tone);
+      wrap(label, 17)
+        .slice(0, 2)
+        .forEach((line, lineIndex) => textAt(line, x + 8, top - 33 - lineIndex * 9, 6.5, "F1", "muted"));
     });
-    y -= 70;
-  }
-
-  function listSection(title: string, items: unknown, empty: string) {
-    heading(title);
-    const list = asList(items);
-    if (!list.length) paragraph(empty, 9, "muted");
-    for (const item of list) bullet(item);
-  }
-
-  function articleCard(article: BriefArticleInput, extraction: ArticleExtraction, index: number) {
-    const note = noteFor(summary, index);
-    const titleLines = textLines(`${index + 1}. ${titleOf(article, extraction)}`, 10, contentWidth - 24);
-    const warningLines = textLines(capText(warningsText(extraction), 280), 7.5, contentWidth - 24);
-    const methodLines = textLines(capText(methodsText(extraction, note), 340), 8, contentWidth - 24);
-    const findingLines = textLines(capText(findingsText(extraction, note), 520), 8, contentWidth - 24);
-    const metaLines = [
-      `Year: ${yearOf(article)}   DOI: ${extraction.doi || "none"}`,
-      `Source status: ${sourceBasis(extraction)}   Sections used: ${extraction.sectionsUsed.join(", ") || "none"}   Weight: ${evidenceWeight(extraction, note)}`
-    ];
-    const cardHeight =
-      30 +
-      titleLines.length * 12 +
-      metaLines.length * 11 +
-      warningLines.length * 10 +
-      methodLines.length * 10 +
-      findingLines.length * 10 +
-      56;
-    ensure(cardHeight + 8);
-    const top = y;
-    rect(margin, top, contentWidth, cardHeight, "border", "panel");
-    page.commands.push(`${color("accent")} ${margin} ${top - cardHeight} 4 ${cardHeight} re f`);
-    let cursor = top - 18;
-    titleLines.forEach((line) => {
-      textAt(line, margin + 14, cursor, 10, "F2", "heading");
-      cursor -= 12;
-    });
-    metaLines.forEach((line) => {
-      textAt(line, margin + 14, cursor, 7.8, "F1", "muted");
-      cursor -= 11;
-    });
-    cursor -= 4;
-    textAt("Extraction warnings", margin + 14, cursor, 7.5, "F2", "warning");
-    cursor -= 10;
-    warningLines.forEach((line) => {
-      textAt(line, margin + 14, cursor, 7.5, "F1", "body");
-      cursor -= 10;
-    });
-    cursor -= 3;
-    textAt("Short method note", margin + 14, cursor, 7.5, "F2", "heading");
-    cursor -= 10;
-    methodLines.forEach((line) => {
-      textAt(line, margin + 14, cursor, 8, "F1", "body");
-      cursor -= 10;
-    });
-    cursor -= 3;
-    textAt("Short findings note", margin + 14, cursor, 7.5, "F2", "heading");
-    cursor -= 10;
-    findingLines.forEach((line) => {
-      textAt(line, margin + 14, cursor, 8, "F1", "body");
-      cursor -= 10;
-    });
-    y -= cardHeight + 12;
+    y -= 68;
   }
 
   addPage();
   textAt("Nursing Research Monitor", margin, y, 18, "F2", "heading");
-  y -= 24;
+  y -= 26;
   textAt(isFallback ? "Fallback Evidence Notes" : "AI Findings Brief", margin, y, 24, "F2", "body");
   y -= 28;
-  paragraph(
-    `A source-status-aware brief generated from ${articles.length} selected record(s). Job: ${jobId}.`,
-    10,
-    "muted"
-  );
-  coverageCards();
-  if (isFallback) {
-    callout(
-      "Fallback notice",
-      "This brief was generated using fallback extraction notes because the selected OpenRouter model did not return a usable synthesis.",
-      "warning"
-    );
-    if (fallbackReason) callout("Model status", fallbackReason, "warning");
+  paragraph(`Generated ${generatedAt}. Selected articles: ${articles.length}.`, 10, "muted");
+  coverageRow();
+
+  for (const block of parseBriefMarkdown(markdown)) {
+    if (block.type === "h1") continue;
+    if (block.type === "h2") h2(block.text);
+    else if (block.type === "li") bullet(block.text);
+    else paragraph(block.text, 9.3);
   }
-  heading(isFallback ? "Fallback evidence notes" : "Executive synthesis");
-  paragraph(summary.executiveSummary || "No executive synthesis was returned.", 10);
 
-  listSection("Key findings", summary.keyFindings, "No key findings were returned.");
-  listSection("Methodological profile", summary.methodologicalProfile, "No methodological profile was returned.");
-  listSection("Implications for nursing research", summary.implicationsForNursingResearch, "No implications were returned.");
-  listSection("Limitations of this brief", summary.limitationsOfEvidenceBase, "No limitations were returned.");
-
-  heading("Article-level source log");
+  h2("Provenance note");
   paragraph(
-    "Each record below shows how it contributed to the brief. Claims should be read in light of the source status, sections used, and extraction warnings.",
-    9,
-    "muted"
-  );
-  articles.forEach((article, index) => {
-    const extraction = extractions[index];
-    if (extraction) articleCard(article, extraction, index);
-  });
-
-  heading("Source note");
-  paragraph(
-    "The monitor uses DOI-first OpenAlex metadata, legal open-access locations where available, and abstract fallbacks when full text is not legally accessible or cannot be sectioned reliably. This PDF does not include hidden prompts, API keys, or raw provider errors.",
+    "This brief is AI-assisted and based only on the source material listed above. Abstract-only records should be interpreted cautiously.",
     8.5,
     "muted"
   );
@@ -396,7 +262,7 @@ export function generateFindingsBriefPdf({
   pages.forEach((pdfPage) => {
     pdfPage.commands.push(
       `BT ${color("muted")} /F1 7 Tf ${margin} 22 Td ${pdfString(
-        "Generated by Nursing Research Monitor. This brief is based only on the source sections and abstracts listed in the article-level source log."
+        "Generated by Nursing Research Monitor. AI-assisted synthesis based only on the listed source material."
       )} Tj ET`
     );
   });

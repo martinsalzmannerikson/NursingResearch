@@ -1,10 +1,23 @@
 import type { Config } from "@netlify/functions";
 import { jsonResponse } from "./_shared/env.js";
 import { resolveArticleEvidence } from "./_shared/brief-openalex.js";
-import { summarizeWithOpenRouter } from "./_shared/brief-openrouter.js";
+import { OpenRouterModelUnavailableError, summarizeWithOpenRouter } from "./_shared/brief-openrouter.js";
 import { generateFindingsBriefPdf } from "./_shared/brief-pdf.js";
 import { sourceCoverage } from "./_shared/brief-utils.js";
 import { getJob, pdfStore, saveJob, updateProgress } from "./_shared/brief-storage.js";
+
+const MODEL_UNAVAILABLE_MESSAGE =
+  "AI synthesis could not be generated. The selected OpenRouter model was unavailable or blocked by privacy/data policy settings. Try another model or adjust OpenRouter privacy settings.";
+
+export function failureStateForBriefError(error: unknown) {
+  const modelUnavailable = error instanceof OpenRouterModelUnavailableError;
+  return {
+    status: modelUnavailable ? ("failed_model_unavailable" as const) : ("failed" as const),
+    message: modelUnavailable ? MODEL_UNAVAILABLE_MESSAGE : "Brief generation failed.",
+    errorMessage: modelUnavailable ? (error as OpenRouterModelUnavailableError).friendlyMessage : (error as Error).message,
+    fallbackReason: modelUnavailable ? (error as OpenRouterModelUnavailableError).details : undefined
+  };
+}
 
 async function processJob(jobId: string) {
   const job = await getJob(jobId);
@@ -33,12 +46,10 @@ async function processJob(jobId: string) {
 
     await updateProgress(jobId, "generating_pdf", "Generating Nursing Research Monitor PDF brief.", extractions.length, job.articles.length);
     const pdf = generateFindingsBriefPdf({
-      jobId,
       articles: job.articles,
       extractions,
-      summary: summary.parsed,
-      synthesisMode: summary.fallback ? "fallback" : "model",
-      fallbackReason: summary.fallbackReason
+      markdown: summary.markdown,
+      synthesisMode: summary.fallback ? "fallback" : "model"
     });
     const pdfKey = `${jobId}.pdf`;
     await pdfStore().set(pdfKey, pdf, {
@@ -53,15 +64,13 @@ async function processJob(jobId: string) {
     completed.status = summary.fallback ? "completed_with_fallback" : "completed";
     completed.progress = {
       step: "completed",
-      message: summary.fallback
-        ? "PDF generated with fallback notes. The selected language model was not available."
-        : "PDF brief is ready.",
+      message: summary.fallback ? "Fallback notes are ready." : "AI Findings Brief ready.",
       completed: job.articles.length,
       total: job.articles.length
     };
     completed.articleSources = extractions;
     completed.sourceStatusSummary = sourceCoverage(extractions);
-    completed.summary = summary.parsed;
+    completed.summary = summary.markdown;
     completed.rawModelResponse = summary.raw;
     completed.modelUsed = summary.model;
     completed.fallbackReason = summary.fallbackReason;
@@ -73,14 +82,16 @@ async function processJob(jobId: string) {
   } catch (error) {
     const failed = await getJob(jobId);
     if (failed) {
-      failed.status = "failed";
+      const failure = failureStateForBriefError(error);
+      failed.status = failure.status;
       failed.progress = {
         step: "failed",
-        message: "Brief generation failed.",
+        message: failure.message,
         completed: failed.articleSources?.length ?? 0,
         total: failed.articles.length
       };
-      failed.errors = [...failed.errors, (error as Error).message];
+      failed.errors = [...failed.errors, failure.errorMessage];
+      if (failure.fallbackReason) failed.fallbackReason = failure.fallbackReason;
       const rawModelResponse = (error as Error & { rawModelResponse?: string }).rawModelResponse;
       if (rawModelResponse) failed.rawModelResponse = rawModelResponse;
       await saveJob(failed);
