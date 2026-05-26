@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { getStore } from "@netlify/blobs";
 import type { Config } from "@netlify/functions";
-import { jsonResponse } from "./_shared/env.js";
+import { getEnv, jsonResponse } from "./_shared/env.js";
 
 const STORE_NAME = "article-abstract-cache";
+const CROSSREF_BASE_URL = "https://api.crossref.org";
 const MAX_HTML_BYTES = 600_000;
 const FETCH_TIMEOUT_MS = 12_000;
 
@@ -185,6 +186,40 @@ async function fetchHtml(url: string) {
   }
 }
 
+async function fetchCrossrefAbstract(doi: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const mailto = getEnv("OPENALEX_MAILTO");
+  const userAgent = mailto
+    ? `NursingResearchMonitor/1.0 (mailto:${mailto})`
+    : "NursingResearchMonitor/1.0 DOI metadata fetcher";
+  try {
+    const response = await fetch(`${CROSSREF_BASE_URL}/works/${encodeURIComponent(doi)}`, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": userAgent
+      }
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const payload = (await response.json()) as {
+      message?: {
+        abstract?: string;
+        URL?: string;
+        resource?: { primary?: { URL?: string } };
+      };
+    };
+    const abstract = plausibleAbstract(payload.message?.abstract ?? "");
+    if (!abstract) throw new Error("no Crossref abstract metadata found");
+    return {
+      abstract,
+      sourceUrl: payload.message?.resource?.primary?.URL || payload.message?.URL || `https://doi.org/${doi}`
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async (request: Request) => {
   if (request.method !== "GET") return jsonResponse({ error: "Method not allowed" }, { status: 405 });
 
@@ -209,6 +244,22 @@ export default async (request: Request) => {
   if (cached) return jsonResponse({ ...cached, cached: true });
 
   const errors: string[] = [];
+  if (doi) {
+    try {
+      const crossref = await fetchCrossrefAbstract(doi);
+      const result: AbstractResult = {
+        abstract: crossref.abstract,
+        source: "doi_metadata",
+        sourceUrl: crossref.sourceUrl,
+        cached: false
+      };
+      await store.setJSON(key, result);
+      return jsonResponse(result);
+    } catch (error) {
+      errors.push(`doi_metadata: ${(error as Error).message}`);
+    }
+  }
+
   for (const candidate of deduped) {
     try {
       const { html, finalUrl } = await fetchHtml(candidate.url);
