@@ -32,6 +32,22 @@ describe("Netlify functions compile and expose modern handlers", () => {
     expect(extractAbstractFromHtml(html)).toContain("nursing education outcomes");
   });
 
+  it("extracts abstracts from publisher abstract containers such as JKAN pages", async () => {
+    const { extractAbstractFromHtml } = await import("../../netlify/functions/article-abstract.mts");
+    const html = `<html><body><div class="abstractBrief"><h4>Abstract</h4><ul><li><b>Purpose</b><dd>This study examined nursing students' learning experiences in a structured clinical simulation program and evaluated outcomes relevant to patient education, care planning, and reflective practice.</dd></li><li><b>Methods</b><dd>A descriptive survey design was used with nursing students after the intervention. The abstract contains enough detail to be treated as a real publisher abstract.</dd></li></ul></div></body></html>`;
+    const extracted = extractAbstractFromHtml(html);
+    expect(extracted).toContain("Purpose");
+    expect(extracted).toContain("structured clinical simulation");
+  });
+
+  it("extracts labelled PubMed XML abstracts", async () => {
+    const { extractPubMedAbstract } = await import("../../netlify/functions/article-abstract.mts");
+    const xml = `<PubmedArticle><Abstract><AbstractText Label="BACKGROUND">Interprofessional education is widely used in nursing and allied health education, but abstract metadata is sometimes missing in cached OpenAlex records.</AbstractText><AbstractText Label="METHODS">The study used a structured educational intervention and evaluated student-reported outcomes across several domains.</AbstractText><AbstractText Label="CONCLUSION">The findings support cautious interpretation of brief DOI metadata when full records are not cached.</AbstractText></Abstract></PubmedArticle>`;
+    const extracted = extractPubMedAbstract(xml);
+    expect(extracted).toContain("BACKGROUND:");
+    expect(extracted).toContain("structured educational intervention");
+  });
+
   it("configures the scheduled update daily", async () => {
     const updateLatest = await import("../../netlify/functions/update-latest.mts");
     expect(typeof updateLatest.default).toBe("function");

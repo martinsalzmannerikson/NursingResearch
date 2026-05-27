@@ -393,12 +393,13 @@ function PublicationCard({ item }: { item: ResearchItem }) {
   const [fallbackAbstract, setFallbackAbstract] = useState("");
   const [fallbackStatus, setFallbackStatus] = useState<"idle" | "loading" | "found" | "missing">("idle");
   const cachedAbstract = item.abstract?.trim() ?? "";
+  const fullTextUrl = item.oa_url || item.url || item.doi;
   const abstract =
     cachedAbstract ||
     fallbackAbstract ||
     (fallbackStatus === "loading"
       ? "Fetching abstract from DOI/full text metadata..."
-      : "Abstract not available in cached data or DOI/full-text metadata. Use the DOI or Full text link to inspect the source.");
+      : "Abstract not available in cached data or DOI/full-text metadata. Use the Full text link to inspect the source.");
   const abstractPreview = expanded || abstract.length < 360 ? abstract : `${abstract.slice(0, 360).trim()}...`;
 
   useEffect(() => {
@@ -447,8 +448,8 @@ function PublicationCard({ item }: { item: ResearchItem }) {
       <p className="abstract">{abstractPreview}</p>
       {!cachedAbstract && fallbackStatus === "found" ? <p className="abstract-source">Abstract fetched from DOI/full text metadata.</p> : null}
       <div className="card-actions">
-        {item.oa_url ? (
-          <a href={item.oa_url} target="_blank" rel="noreferrer">
+        {fullTextUrl ? (
+          <a href={fullTextUrl} target="_blank" rel="noreferrer">
             Full text <ExternalLink size={14} aria-hidden="true" />
           </a>
         ) : null}

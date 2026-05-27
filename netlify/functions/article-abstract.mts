@@ -6,6 +6,7 @@ import { getEnv, jsonResponse } from "./_shared/env.js";
 const STORE_NAME = "article-abstract-cache";
 const CROSSREF_BASE_URL = "https://api.crossref.org";
 const EUROPE_PMC_BASE_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest";
+const PUBMED_BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 const MAX_HTML_BYTES = 600_000;
 const FETCH_TIMEOUT_MS = 12_000;
 
@@ -36,7 +37,7 @@ function safeUrl(value = "") {
 }
 
 function cacheKey(identifier: string) {
-  return `abstracts/v3/${createHash("sha256").update(identifier).digest("hex")}.json`;
+  return `abstracts/v4/${createHash("sha256").update(identifier).digest("hex")}.json`;
 }
 
 function decodeEntities(value = "") {
@@ -138,8 +139,22 @@ export function extractAbstractFromHtml(html: string) {
     }
   }
 
+  const explicitAbstractContainer =
+    html.match(
+      /<(section|div|article)\b(?=[^>]*(?:class|id)\s*=\s*['"][^'"]*(?:abstractBrief|article__abstract|abstract|summary)[^'"]*['"])[^>]*>([\s\S]{80,16000}?)<\/\1>/i
+    )?.[2] ?? "";
+  const explicitAbstract = plausibleAbstract(explicitAbstractContainer);
+  if (explicitAbstract) return explicitAbstract;
+
+  const headingAbstract =
+    html.match(
+      /<h[1-6]\b[^>]*>\s*(?:abstract|summary)\s*<\/h[1-6]>([\s\S]{80,16000}?)(?=<h[1-6]\b|<section\b|<article\b|$)/i
+    )?.[1] ?? "";
+  const headingText = plausibleAbstract(headingAbstract);
+  if (headingText) return headingText;
+
   const sectionMatch =
-    html.match(/<(section|div|article)\b[^>]*(abstract|summary)[^>]*>([\s\S]{80,8000}?)<\/\1>/i)?.[3] ?? "";
+    html.match(/<(section|div|article)\b[^>]*(abstract|summary)[^>]*>([\s\S]{80,16000}?)<\/\1>/i)?.[3] ?? "";
   return plausibleAbstract(sectionMatch);
 }
 
@@ -257,6 +272,57 @@ async function fetchEuropePmcAbstract(doi: string) {
   }
 }
 
+export function extractPubMedAbstract(xml: string) {
+  const parts: string[] = [];
+  for (const match of xml.matchAll(/<AbstractText\b([^>]*)>([\s\S]*?)<\/AbstractText>/gi)) {
+    const label = attr(match[1], "Label");
+    const text = stripHtml(match[2]);
+    if (!text) continue;
+    parts.push(label ? `${label}: ${text}` : text);
+  }
+  return plausibleAbstract(parts.join(" "));
+}
+
+async function fetchPubMedAbstract(doi: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const searchUrl = new URL(`${PUBMED_BASE_URL}/esearch.fcgi`);
+    searchUrl.searchParams.set("db", "pubmed");
+    searchUrl.searchParams.set("retmode", "json");
+    searchUrl.searchParams.set("term", `${doi}[doi]`);
+    const searchResponse = await fetch(searchUrl, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "NursingResearchMonitor/1.0 DOI metadata fetcher"
+      }
+    });
+    if (!searchResponse.ok) throw new Error(`${searchResponse.status} ${searchResponse.statusText}`);
+    const searchPayload = (await searchResponse.json()) as { esearchresult?: { idlist?: string[] } };
+    const pubmedId = searchPayload.esearchresult?.idlist?.[0] ?? "";
+    if (!pubmedId) throw new Error("no PubMed record found for DOI");
+
+    const fetchUrl = new URL(`${PUBMED_BASE_URL}/efetch.fcgi`);
+    fetchUrl.searchParams.set("db", "pubmed");
+    fetchUrl.searchParams.set("retmode", "xml");
+    fetchUrl.searchParams.set("id", pubmedId);
+    const fetchResponse = await fetch(fetchUrl, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/xml,text/xml",
+        "User-Agent": "NursingResearchMonitor/1.0 DOI metadata fetcher"
+      }
+    });
+    if (!fetchResponse.ok) throw new Error(`${fetchResponse.status} ${fetchResponse.statusText}`);
+    const abstract = extractPubMedAbstract(await fetchResponse.text());
+    if (!abstract) throw new Error("no PubMed abstract metadata found");
+    return { abstract, sourceUrl: `https://pubmed.ncbi.nlm.nih.gov/${pubmedId}/` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async (request: Request) => {
   if (request.method !== "GET") return jsonResponse({ error: "Method not allowed" }, { status: 405 });
 
@@ -308,6 +374,20 @@ export default async (request: Request) => {
       return jsonResponse(result);
     } catch (error) {
       errors.push(`doi_metadata_europepmc: ${(error as Error).message}`);
+    }
+
+    try {
+      const pubmed = await fetchPubMedAbstract(doi);
+      const result: AbstractResult = {
+        abstract: pubmed.abstract,
+        source: "doi_metadata",
+        sourceUrl: pubmed.sourceUrl,
+        cached: false
+      };
+      await store.setJSON(key, result);
+      return jsonResponse(result);
+    } catch (error) {
+      errors.push(`doi_metadata_pubmed: ${(error as Error).message}`);
     }
   }
 

@@ -41,6 +41,7 @@ export const itemB: ResearchItem = {
   is_scopus: false,
   norwegian_level: "",
   abstract: "Community care prevention article.",
+  url: "https://doi.org/10.1000/b",
   oa_url: "",
   is_oa: false,
   cited_by_count: 2
